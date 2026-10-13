@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NFL Fantasy · Análisis</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="marca">
+      <span class="logo">🏈</span>
+      <div>
+        <h1>NFL Fantasy</h1>
+        <p id="subtitulo" class="sub"></p>
+        <span id="sync" class="tag gris"></span>
+      </div>
+    </div>
+    <nav id="tabs" class="tabs">
+      <button data-tab="equipo" class="on">Mi equipo</button>
+      <button data-tab="partidos">Partidos</button>
+      <button data-tab="jugadores">Jugadores</button>
+      <button data-tab="trades">Analizar trade</button>
+      <button data-tab="objetivos">Movimientos</button>
+      <button data-tab="ajustes">Liga y datos</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="tab-equipo" class="tab on"></section>
+    <section id="tab-partidos" class="tab"></section>
+    <section id="tab-jugadores" class="tab"></section>
+    <section id="tab-trades" class="tab"></section>
+    <section id="tab-objetivos" class="tab"></section>
+    <section id="tab-ajustes" class="tab"></section>
+  </main>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-caja">
+      <button class="cerrar" id="cerrarModal" aria-label="Cerrar">×</button>
+      <div id="modalCuerpo"></div>
+    </div>
+  </div>
+
+  <datalist id="listaJugadores"></datalist>
+
+  <script src="data.js"></script>
+  <script src="mi_equipo.js"></script>
+  <script src="espn_local.js"></script>
+  <script src="sync.js"></script>
+  <script src="modelo.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

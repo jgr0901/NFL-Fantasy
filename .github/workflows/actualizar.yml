@@ -1,0 +1,27 @@
+name: Actualizar datos NFL
+
+on:
+  schedule:
+    # Martes y sábado, 8:53 hora del centro de México (14:53 UTC)
+    - cron: "53 14 * * 2,6"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Descargar estadísticas y regenerar data.js
+        run: python actualizar_datos.py
+      - name: Guardar cambios
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
+          git add data.js
+          git diff --cached --quiet || (git commit -m "Actualizar datos NFL" && git push)
