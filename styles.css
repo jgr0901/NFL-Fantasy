@@ -1,8 +1,13 @@
 :root {
-  --bg: #f4f5f7;
+  --bg: #eef2f8;
   --panel: #ffffff;
-  --panel2: #eef0f3;
-  --borde: #dde1e6;
+  --panel2: #e9eef6;
+  --borde: #d6deea;
+  --marca: #094782;
+  --marca2: #c8242d;
+  --marca-bg: #e4ecf7;
+  --marca2-bg: #fbe9ea;
+  --sobre-marca: #ffffff;
   --texto: #15181d;
   --suave: #5d6673;
   --acento: #0a7d3b;
@@ -13,15 +18,21 @@
   --amarillo-bg: #fff3d6;
   --azul: #1d5fbf;
   --azul-bg: #e5eefb;
-  --barra: #0a7d3b;
+  --barra: #094782;
   --sombra: 0 1px 2px rgba(0, 0, 0, .06), 0 2px 8px rgba(0, 0, 0, .04);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0f1114;
-    --panel: #181b20;
-    --panel2: #20242b;
-    --borde: #2c313a;
+    color-scheme: dark;
+    --bg: #0b1120;
+    --panel: #141b2b;
+    --panel2: #1c2538;
+    --borde: #2a3550;
+    --marca: #6aa5ff;
+    --marca2: #ff5a63;
+    --marca-bg: #15264a;
+    --marca2-bg: #3a1a1f;
+    --sobre-marca: #08111f;
     --texto: #eef1f5;
     --suave: #9aa3b0;
     --acento: #34d27b;
@@ -32,14 +43,16 @@
     --amarillo-bg: #3a2f14;
     --azul: #6aa5ff;
     --azul-bg: #16243a;
-    --barra: #34d27b;
+    --barra: #6aa5ff;
     --sombra: none;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0f1114; --panel: #181b20; --panel2: #20242b; --borde: #2c313a; --texto: #eef1f5; --suave: #9aa3b0;
+  color-scheme: dark;
+  --bg: #0b1120; --panel: #141b2b; --panel2: #1c2538; --borde: #2a3550; --texto: #eef1f5; --suave: #9aa3b0;
+  --marca: #6aa5ff; --marca2: #ff5a63; --marca-bg: #15264a; --marca2-bg: #3a1a1f; --sobre-marca: #08111f;
   --acento: #34d27b; --acento-bg: #143322; --rojo: #ff6b6b; --rojo-bg: #3a1a1c; --amarillo: #f5c04a;
-  --amarillo-bg: #3a2f14; --azul: #6aa5ff; --azul-bg: #16243a; --barra: #34d27b; --sombra: none;
+  --amarillo-bg: #3a2f14; --azul: #6aa5ff; --azul-bg: #16243a; --barra: #6aa5ff; --sombra: none;
 }
 
 * { box-sizing: border-box; }
@@ -48,12 +61,18 @@ body {
   font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 h1, h2, h3 { margin: 0; line-height: 1.2; }
-h2 { font-size: 18px; margin-bottom: 4px; }
+h2 { font-size: 19px; margin-bottom: 4px; color: var(--marca); }
 h3 { font-size: 15px; margin-bottom: 8px; }
+.panel > h3:first-child { padding-left: 10px; border-left: 4px solid var(--marca2); }
 a { color: var(--azul); }
 .sub, .nota { color: var(--suave); font-size: 12.5px; margin: 2px 0 0; }
 
-.top { background: var(--panel); border-bottom: 1px solid var(--borde); position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; }
+.top { background: var(--panel); border-bottom: 1px solid var(--borde); position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; box-shadow: var(--sombra); }
+.top::before { content: ""; display: block; height: 4px; background: linear-gradient(90deg, var(--marca) 0 55%, var(--marca2) 55% 100%); }
+.logo-img { width: 48px; height: 48px; flex: none; background: #fff; border-radius: 12px; padding: 3px; box-shadow: 0 1px 3px rgba(9, 71, 130, .25); }
+.marca h1 { letter-spacing: .02em; font-weight: 800; }
+.t-nfl { color: var(--marca); }
+.t-fan { color: var(--marca2); }
 #sync { margin-top: 4px; }
 .marca { display: flex; gap: 10px; align-items: center; padding: 12px 20px 6px; }
 .logo { font-size: 26px; }
@@ -63,7 +82,8 @@ a { color: var(--azul); }
   background: none; border: 0; border-bottom: 3px solid transparent; color: var(--suave);
   padding: 10px 12px; font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap;
 }
-.tabs button.on { color: var(--texto); border-bottom-color: var(--acento); }
+.tabs button.on { color: var(--marca); border-bottom-color: var(--marca2); }
+.tabs button:hover { color: var(--marca); }
 
 main { max-width: 1200px; margin: 0 auto; padding: 18px 16px 60px; min-width: 0; }
 .tab { display: none; }
@@ -78,7 +98,9 @@ main { max-width: 1200px; margin: 0 auto; padding: 18px 16px 60px; min-width: 0;
 .panel + .panel, .bloque { margin-top: 16px; }
 
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 14px 0; }
-.kpi { background: var(--panel); border: 1px solid var(--borde); border-radius: 12px; padding: 12px 14px; }
+.kpi { background: var(--panel); border: 1px solid var(--borde); border-top: 4px solid var(--marca); border-radius: 12px; padding: 12px 14px; box-shadow: var(--sombra); }
+.kpi:nth-child(even) { border-top-color: var(--marca2); }
+.kpi .v { color: var(--marca); }
 .kpi .v { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .kpi .l { color: var(--suave); font-size: 12px; }
 
@@ -87,18 +109,19 @@ select, input[type="text"], input[type="search"], input[type="number"], input[ty
   border-radius: 8px; padding: 7px 10px; font: inherit;
 }
 button.btn, a.btn {
-  background: var(--acento); color: #fff; border: 0; border-radius: 8px; padding: 8px 14px;
+  background: var(--marca); color: var(--sobre-marca); border: 0; border-radius: 8px; padding: 8px 14px;
   font: inherit; font-weight: 600; cursor: pointer;
 }
-:root[data-theme="dark"] button.btn { color: #06150c; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) button.btn { color: #06150c; } }
+button.btn:hover, a.btn:hover { filter: brightness(1.1); }
+a.btn.rojo { background: var(--marca2); }
 button.sec { background: var(--panel2); color: var(--texto); border: 1px solid var(--borde); border-radius: 8px; padding: 6px 10px; cursor: pointer; font: inherit; }
 button.x { background: none; border: 0; color: var(--suave); cursor: pointer; font-size: 16px; padding: 0 4px; }
 button.x:hover { color: var(--rojo); }
 
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 th, td { padding: 7px 8px; text-align: left; border-bottom: 1px solid var(--borde); vertical-align: middle; }
-th { color: var(--suave); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .02em; }
+thead th { background: var(--marca-bg); }
+th { color: var(--marca); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .02em; }
 th.ord { cursor: pointer; user-select: none; }
 th.ord:hover { color: var(--texto); }
 td.n, th.n { text-align: right; }
@@ -186,3 +209,4 @@ ol.pasos li { margin-bottom: 6px; }
   main { padding: 14px 16px 50px; }
   .ocultar-movil { display: none; }
 }
+.kpi .v.malo { color: var(--rojo); }
