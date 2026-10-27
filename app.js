@@ -92,6 +92,8 @@
   }
   const ligaMia = D.liga && D.liga.equipos ? D.liga.equipos.find((e) => e.mio) : null;
   const SY = window.Sync;
+  // Dirección de esta página para que el botón de ESPN mande la liga directo (no aplica abierta como archivo ni en claude.ai)
+  const DESTINO = /^https?:$/.test(location.protocol) && !window.claude ? location.origin + location.pathname : null;
   let roster = [], origenRoster = "";
   function cargarRoster() {
     const r = SY.estado.roster;
@@ -682,9 +684,9 @@
           `<p>Con tu liga conectada la página sabe qué equipo tiene a cada jugador, quiénes están libres, y arma trades con los rosters reales de tus rivales. No necesitas cookies ni Python.</p>`}
         <ol class="pasos">
           <li><b>Una sola vez:</b> muestra la barra de favoritos de Chrome (<b>Ctrl+Shift+B</b>) y <b>arrastra este botón</b> hasta ella:
-            <a class="btn" style="display:inline-block;text-decoration:none;margin:6px 4px" href="${window.EspnLocal ? EspnLocal.codigoBoton(window.MI_EQUIPO && window.MI_EQUIPO.ligaId) : "#"}" onclick="alert('Arrástrame a tu barra de favoritos y úsame estando en la página de tu liga en ESPN.');return false;">⬇ Bajar mi liga de ESPN</a></li>
-          <li>Abre <a href="https://fantasy.espn.com/football/" target="_blank" rel="noopener">tu liga en fantasy.espn.com</a> (con tu sesión iniciada) y da clic en el favorito <b>⬇ Bajar mi liga de ESPN</b>. Se descarga el archivo <code>espn_liga.json</code>.</li>
-          <li>Regresa aquí y cárgalo: <input type="file" id="archivoEspn" accept=".json,application/json"></li>
+            <a class="btn" style="display:inline-block;text-decoration:none;margin:6px 4px" href="${window.EspnLocal ? EspnLocal.codigoBoton(window.MI_EQUIPO && window.MI_EQUIPO.ligaId, DESTINO) : "#"}" onclick="alert('Arrástrame a tu barra de favoritos y úsame estando en la página de tu liga en ESPN.');return false;">⬇ Bajar mi liga de ESPN</a></li>
+          <li>Abre <a href="https://fantasy.espn.com/football/" target="_blank" rel="noopener">tu liga en fantasy.espn.com</a> (con tu sesión iniciada) y da clic en el favorito <b>⬇ Bajar mi liga de ESPN</b>. ${DESTINO ? "Se abre esta página con tu liga ya puesta al día. Repítelo cuando quieras actualizarla." : "Se descarga el archivo <code>espn_liga.json</code>."}</li>
+          <li>${DESTINO ? "Si tu navegador bloquea la ventana, el botón descarga <code>espn_liga.json</code>; cárgalo aquí:" : "Regresa aquí y cárgalo:"} <input type="file" id="archivoEspn" accept=".json,application/json"></li>
         </ol>
         <p class="nota" id="msgEspn"></p>
         ${D.liga ? `<button class="sec" id="desconectarEspn">Desconectar liga</button>` : ""}
@@ -701,6 +703,33 @@
         <p class="nota">Cada jugador tiene un promedio por partido de esta temporada (las semanas recientes pesan más) combinado con la temporada pasada, y sus TDs se ajustan hacia lo que sus yardas sugieren. Para cada partido se predice el marcador y las yardas de cada equipo con el rendimiento de las ofensivas y defensas ajustado por rival, mezclado con la línea de las casas de apuestas cuando existe. Las estadísticas del jugador suben o bajan según ese partido, y se descuentan lesiones y semanas de descanso. El valor de trade es lo que aportará el resto de la temporada por encima de un jugador que encontrarías en agentes libres.</p></div>`;
     conectarEspnUI();
   };
+
+  // Recibir la liga directo desde el botón de ESPN (sin archivo)
+  function aplicarLigaEspn(raw) {
+    const c = EspnLocal.compactar(raw, (window.MI_EQUIPO && window.MI_EQUIPO.nombre) || "");
+    if (!c.liga.equipos.length) throw new Error("ESPN no mandó equipos");
+    SY.estado.roster = null;
+    SY.guardar();
+    return SY.guardarEspn(c).then(() => c);
+  }
+  if (new URLSearchParams(location.search).has("espn") && window.opener) {
+    const aviso = document.createElement("div");
+    aviso.className = "ayuda"; aviso.style.cssText = "position:fixed;left:16px;right:16px;bottom:16px;z-index:30;text-align:center";
+    aviso.textContent = "Recibiendo tu liga de ESPN…";
+    document.body.appendChild(aviso);
+    window.addEventListener("message", (e) => {
+      if (!/^https:\/\/([a-z0-9-]+\.)*espn\.com$/.test(e.origin) || !e.data || e.data.tipo !== "nflf-espn") return;
+      try {
+        aplicarLigaEspn(e.data.datos).then((c) => {
+          aviso.textContent = "Liga actualizada: " + c.liga.equipos.length + " equipos. Cargando…";
+          history.replaceState(null, "", location.pathname);
+          setTimeout(() => location.reload(), 700);
+        });
+      } catch (err) { aviso.textContent = "No pude leer tu liga: " + err.message; }
+    });
+    try { window.opener.postMessage("nflf-listo", "*"); } catch (e) { /* sin ventana de ESPN */ }
+    setTimeout(() => { if (aviso.isConnected && /Recibiendo/.test(aviso.textContent)) aviso.textContent = "No llegó nada de ESPN. Vuelve a dar clic en el favorito estando en tu liga."; }, 20000);
+  }
 
   function respaldoUI() {
     const nube = !!window.claude;
@@ -746,12 +775,8 @@
       r.onload = () => {
         try {
           const raw = JSON.parse(r.result);
-          const c = EspnLocal.compactar(raw, (window.MI_EQUIPO && window.MI_EQUIPO.nombre) || "");
-          if (!c.liga.equipos.length) throw new Error("el archivo no trae equipos");
-          SY.estado.roster = null;
-          SY.guardar();
           $("#msgEspn").textContent = "Guardando tu liga…";
-          SY.guardarEspn(c).then(() => {
+          aplicarLigaEspn(raw).then((c) => {
             $("#msgEspn").textContent = "Liga cargada: " + c.liga.equipos.length + " equipos. Recargando…";
             setTimeout(() => location.reload(), 900);
           }, () => { $("#msgEspn").innerHTML = '<span class="malo">Se guardó en este dispositivo pero no en la nube. Intenta de nuevo.</span>'; });

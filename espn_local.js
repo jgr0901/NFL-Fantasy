@@ -110,13 +110,17 @@
   }
 
   // Código del botón que se usa dentro de fantasy.espn.com
-  function codigoBoton(ligaId) {
-    const f = function (L) {
+  // Botón para la barra de favoritos. Se usa estando en fantasy.espn.com: lee la liga con la sesión
+  // de ESPN del navegador y la manda directo a esta página (destino). Si no hay destino o el
+  // navegador bloquea la ventana, descarga espn_liga.json para cargarlo a mano.
+  function codigoBoton(ligaId, destino) {
+    const f = function (L, D) {
+      if (!/espn\.com$/.test(location.hostname)) { alert("Abre primero tu liga en fantasy.espn.com y luego da clic aquí."); return; }
+      L = new URLSearchParams(location.search).get("leagueId") || L;
+      if (!L) { alert("No encontré el número de tu liga. Abre la página de tu equipo o de tu liga en fantasy.espn.com y vuelve a dar clic aquí."); return; }
+      const w = D ? window.open(D + "?espn=" + Date.now(), "_blank") : null;
       (async () => {
         try {
-          if (!/espn\.com$/.test(location.hostname)) { alert("Abre primero tu liga en fantasy.espn.com y luego da clic aquí."); return; }
-          L = new URLSearchParams(location.search).get("leagueId") || L;
-          if (!L) { alert("No encontré el número de tu liga. Abre la página de tu equipo o de tu liga en fantasy.espn.com y vuelve a dar clic aquí."); return; }
           const hoy = new Date(), Y = hoy.getMonth() >= 2 ? hoy.getFullYear() : hoy.getFullYear() - 1;
           const base = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/" + Y + "/segments/0/leagues/" + L;
           const o = { credentials: "include" };
@@ -132,6 +136,13 @@
           } catch (e) { /* sigue solo con la liga */ }
           const m = document.cookie.match(/SWID=([^;]+)/);
           const datos = { fecha: new Date().toISOString(), semana: W, swid: m ? decodeURIComponent(m[1]) : "", liga, jugadores };
+          if (w && !w.closed) {
+            const origen = new URL(D).origin;
+            const enviar = () => { try { w.postMessage({ tipo: "nflf-espn", datos }, origen); } catch (e) { /* aún cargando */ } };
+            window.addEventListener("message", (e) => { if (e.origin === origen && e.data === "nflf-listo") enviar(); });
+            enviar();
+            return;
+          }
           const a = document.createElement("a");
           a.href = URL.createObjectURL(new Blob([JSON.stringify(datos)], { type: "application/json" }));
           a.download = "espn_liga.json";
@@ -140,7 +151,7 @@
         } catch (e) { alert("No se pudo leer tu liga de ESPN: " + e.message + "\n¿Abriste la página de tu liga con tu sesión iniciada?"); }
       })();
     };
-    return "javascript:" + encodeURIComponent("(" + f.toString() + ")(" + (ligaId ? JSON.stringify(String(ligaId)) : "null") + ");void 0");
+    return "javascript:" + encodeURIComponent("(" + f.toString() + ")(" + (ligaId ? JSON.stringify(String(ligaId)) : "null") + "," + (destino ? JSON.stringify(destino) : "null") + ");void 0");
   }
 
   global.EspnLocal = { leer, guardar, borrar, compactar, aplicar, codigoBoton };
