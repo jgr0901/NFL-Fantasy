@@ -82,7 +82,7 @@ main { max-width: 1200px; margin: 0 auto; padding: 18px 16px 60px; min-width: 0;
 .kpi .v { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .kpi .l { color: var(--suave); font-size: 12px; }
 
-select, input[type="text"], input[type="search"], input[type="number"] {
+select, input[type="text"], input[type="search"], input[type="number"], input[type="email"], input[type="password"] {
   background: var(--panel); color: var(--texto); border: 1px solid var(--borde);
   border-radius: 8px; padding: 7px 10px; font: inherit;
 }

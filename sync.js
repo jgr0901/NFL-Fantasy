@@ -194,6 +194,10 @@
     if (error) throw new Error(traducir(error));
     return { confirmar: !data.session };
   }
+  async function entrarConGoogle() {
+    const { error } = await sb.auth.signInWithOAuth({ provider: "google", options: { redirectTo: location.origin + location.pathname } });
+    if (error) throw new Error(traducir(error));
+  }
   async function salir() { if (sb) await sb.auth.signOut(); }
 
   global.Sync = {
@@ -201,7 +205,7 @@
     get modo() { return modo; },
     get usuario() { return usuario; },
     get hayCuentas() { return !!sb; },
-    guardar, guardarEspn, borrarEspn, iniciar, entrar, crearCuenta, salir,
+    guardar, guardarEspn, borrarEspn, iniciar, entrar, entrarConGoogle, crearCuenta, salir,
     alCambiar: (f) => oyentes.push(f),
   };
 })(window);
