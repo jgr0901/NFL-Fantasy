@@ -549,6 +549,59 @@
     out.sort((a, b) => b.gana - a.gana);
     return out.slice(0, 10);
   }
+  // Qué posiciones le faltan y le sobran a cada equipo de la liga, para encontrar trades
+  function necesidadesLiga() {
+    if (!D.liga || !D.liga.equipos) return [];
+    const POSS = ["QB", "RB", "WR", "TE"];
+    const fila = (id) => M.porId[id] && M.porId[id].fila;
+    const prom = {};
+    POSS.forEach((p) => {
+      const n = M.cfg.slots[p] || 1;
+      prom[p] = M.mean(M.tabla.filter((f) => f.j.pos === p).sort((a, b) => b.rosPG - a.rosPG).slice(0, M.cfg.equipos * n).map((f) => f.rosPG));
+    });
+    const analizar = (ids) => {
+      const r = {};
+      POSS.forEach((p) => {
+        const n = M.cfg.slots[p] || 1;
+        const js = ids.map(fila).filter((f) => f && f.j.pos === p).sort((a, b) => b.rosPG - a.rosPG);
+        const tit = js.slice(0, n), banca = js.slice(n);
+        const ratio = prom[p] ? M.mean(tit.map((f) => f.rosPG).concat(Array(Math.max(0, n - tit.length)).fill(0))) / prom[p] : 1;
+        // Le sobra: un suplente que sería titular útil en otro equipo
+        const sobra = banca.filter((f) => f.rosPG >= prom[p] * 0.8 && f.valor >= 5);
+        r[p] = { ratio, tit, banca, sobra };
+      });
+      return r;
+    };
+    const mioIds = roster;
+    const yo = analizar(mioIds);
+    const misSobrantes = (p) => {
+      // lo que puedo dar sin dañar mi alineación: suplentes, o titulares si me sobra la posición
+      const x = yo[p];
+      return x.banca.filter((f) => f.valor >= 3).concat(x.ratio >= 1.15 && x.banca.length ? x.tit.slice(-1) : []);
+    };
+    return D.liga.equipos.filter((e) => !e.mio).map((e) => {
+      const a = analizar(e.jugadores);
+      const necesita = POSS.filter((p) => a[p].ratio < 0.93).sort((x, y) => a[x].ratio - a[y].ratio);
+      const sobra = POSS.filter((p) => a[p].sobra.length || a[p].ratio >= 1.12);
+      // Idea: le doy lo que necesita de lo que me sobra, y pido de lo que le sobra donde yo estoy más débil
+      let idea = null;
+      const misDebiles = POSS.filter((p) => yo[p].ratio < 1).sort((x, y) => yo[x].ratio - yo[y].ratio);
+      for (const pn of necesita) {
+        const doy = misSobrantes(pn).sort((x, y) => y.valor - x.valor)[0];
+        if (!doy) continue;
+        for (const pm of misDebiles.concat(POSS.filter((p) => !misDebiles.includes(p)))) {
+          if (pm === pn) continue;
+          const cand = (a[pm].sobra.length ? a[pm].sobra : a[pm].ratio >= 1.12 ? a[pm].tit.slice(-1) : [])
+            .filter((f) => f.valor <= doy.valor * 1.25 && f.valor >= doy.valor * 0.6)
+            .sort((x, y) => y.rosPG - x.rosPG)[0];
+          if (cand && (yo[pm].tit.length < (M.cfg.slots[pm] || 1) || cand.rosPG > Math.min(...yo[pm].tit.map((f) => f.rosPG)))) { idea = { doy: doy.j.id, recibo: cand.j.id }; break; }
+        }
+        if (idea) break;
+      }
+      return { e, a, necesita, sobra, idea };
+    }).sort((x, y) => (y.idea ? 1 : 0) - (x.idea ? 1 : 0) || y.necesita.length - x.necesita.length);
+  }
+
   render.objetivos = function () {
     const el = $("#tab-objetivos");
     const semanas = Math.max(1, ULTIMA - SEM + 1);
@@ -598,10 +651,23 @@
           <td><button class="sec" data-prueba="${i}">Analizar</button></td></tr>`;
       }).join("")}</tbody></table></div>` : `<div class="vacio">No encontré trades justos que mejoren tu alineación. Tu roster está bien balanceado para su valor.</div>`;
     }
+    const necesidades = necesidadesLiga();
+    const posTag = (p, a, bien) => `<span class="pos ${p}" title="${bien ? "Le sobra" : "Le falta"}: titulares al ${Math.round(a[p].ratio * 100)}% del promedio">${p}</span>`;
+    const necesHTML = D.liga ? `<div class="panel bloque"><h3>🔁 Qué necesita cada equipo</h3>
+        <p class="nota">Compara los titulares de cada equipo contra el promedio de la liga. <b>Necesita</b> = posiciones donde está débil (ahí le interesa recibir). <b>Le sobra</b> = posiciones con suplentes que serían titulares en otro equipo (ahí te puede dar). La idea de trade usa lo que a ti te sobra.</p>
+        <div class="tabla-scroll"><table class="mini"><thead><tr><th>Equipo</th><th>Récord</th><th>Necesita</th><th>Le sobra</th><th>Idea de trade</th><th></th></tr></thead><tbody>
+        ${necesidades.map((x, i) => `<tr><td><b>${esc(x.e.nombre)}</b><div class="nota">${esc(x.e.dueno || "")}</div></td>
+          <td>${esc(x.e.record || "")}</td>
+          <td>${x.necesita.length ? x.necesita.map((p) => posTag(p, x.a, false)).join(" ") : '<span class="nota">nada claro</span>'}</td>
+          <td>${x.sobra.length ? x.sobra.map((p) => posTag(p, x.a, true)).join(" ") : '<span class="nota">—</span>'}</td>
+          <td>${x.idea ? `<div class="clic" data-j="${x.idea.doy}">Das: ${jugHTML(M.porId[x.idea.doy])}</div><div class="clic" data-j="${x.idea.recibo}">Pides: ${jugHTML(M.porId[x.idea.recibo])}</div>` : '<span class="nota">Sin un cambio claro con tu roster</span>'}</td>
+          <td>${x.idea ? `<button class="sec" data-nidea="${i}">Analizar</button>` : ""}</td></tr>`).join("")}
+        </tbody></table></div></div>` : `<div class="panel bloque"><h3>🔁 Qué necesita cada equipo</h3><p class="nota">Conecta tu liga de ESPN (pestaña Liga y datos) para ver qué posiciones le faltan a cada equipo y a quién proponerle un trade.</p></div>`;
     el.innerHTML = `<h2>Movimientos: compra, vende, agrega y suelta</h2>
       <p class="nota">Proy/PJ = puntos por partido que el modelo espera el resto de la temporada. Cuando es mucho mayor que lo que ha hecho (Pts/PJ), es buen momento para pedirlo; cuando es menor, es buen momento para venderlo.</p>
       <div class="panel bloque"><h3>Trades recomendados para tu equipo</h3>
         <p class="nota">Ofertas de valor parecido (que el otro equipo podría aceptar) que más puntos por semana le suman a tu alineación.${D.liga ? "" : " Como tu liga no está conectada, puede sugerir jugadores que ya tienes tú o que nadie tiene."}</p>${sug}</div>
+      ${necesHTML}
       <div class="grid2 anchas bloque">
         <div class="panel"><h3>➕ Agregar de waivers</h3>
           <p class="nota">${D.liga ? "Jugadores que nadie tiene en tu liga" : "Jugadores en pocas ligas de ESPN (conecta tu liga para ver solo los que están libres de verdad)"}, ordenados por cuántos puntos le suman a tu alineación lo que resta de la temporada, y a quién soltarías.</p>
@@ -627,6 +693,10 @@
           <h3 style="margin-top:14px">Vender caro (otros equipos, para no pedirlos)</h3>${tablaLista(ventaOtros, (x) => filaLista(x, razonesVenta(x)))}</div>
         <div class="panel"><h3>📅 Calendario más fácil lo que resta</h3>${tablaLista(calendario, (x) => filaLista(x, `rivales ${Math.round((x.calendario - 1) * 100)}% más fáciles que el promedio`))}</div>
       </div>`;
+    el.querySelectorAll("[data-nidea]").forEach((b) => (b.onclick = () => {
+      const x = necesidades[+b.dataset.nidea];
+      trade.doy = [x.idea.doy]; trade.recibo = [x.idea.recibo]; abrir("trades");
+    }));
     el.querySelectorAll("[data-prueba]").forEach((b) => (b.onclick = () => {
       const s = sugerencias[+b.dataset.prueba];
       trade.doy = s.doy.slice(); trade.recibo = [s.objetivo]; abrir("trades");
