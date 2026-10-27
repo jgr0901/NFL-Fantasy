@@ -11,7 +11,9 @@ Página para analizar tu equipo de fantasy football de ESPN: alineación recomen
 
 También puedes escribir tus jugadores a mano en **Mi equipo**.
 
-Todo lo que guardas (roster, seguimientos, trades) se queda en tu navegador; nadie más lo ve. Para pasarlo a otro dispositivo usa **Guardar respaldo** y **Cargar respaldo** en *Liga y datos*.
+Puedes **crear una cuenta** (correo y contraseña) en *Liga y datos*: tu roster, liga, seguimientos y trades se guardan en tu cuenta y se sincronizan en vivo entre tu computadora y tu teléfono. Sin cuenta, todo se queda en tu navegador. Cada cuenta solo puede ver sus propios datos.
+
+Las cuentas viven en Supabase (tabla `nfl_estado`, con reglas RLS por usuario). La configuración está en `config_cuentas.js`; la librería está en `vendor/`.
 
 ## Datos
 

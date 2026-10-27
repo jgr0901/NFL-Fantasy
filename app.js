@@ -657,6 +657,7 @@
     const el = $("#tab-ajustes");
     const P = M.cfg.pts;
     el.innerHTML = `<h2>Tu liga y los datos</h2>
+      ${SY.hayCuentas ? `<div class="panel bloque" id="cuenta"></div>` : ""}
       <div class="grid2 bloque">
         <div class="panel"><h3>Puntuación que usa la página</h3>
           <table class="mini"><tbody>
@@ -702,6 +703,7 @@
       <div class="panel bloque"><h3>Cómo predice el modelo</h3>
         <p class="nota">Cada jugador tiene un promedio por partido de esta temporada (las semanas recientes pesan más) combinado con la temporada pasada, y sus TDs se ajustan hacia lo que sus yardas sugieren. Para cada partido se predice el marcador y las yardas de cada equipo con el rendimiento de las ofensivas y defensas ajustado por rival, mezclado con la línea de las casas de apuestas cuando existe. Las estadísticas del jugador suben o bajan según ese partido, y se descuentan lesiones y semanas de descanso. El valor de trade es lo que aportará el resto de la temporada por encima de un jugador que encontrarías en agentes libres.</p></div>`;
     conectarEspnUI();
+    cuentaUI();
   };
 
   // Recibir la liga directo desde el botón de ESPN (sin archivo)
@@ -735,7 +737,9 @@
     const nube = !!window.claude;
     $("#txtRespaldo").textContent = nube
       ? "Tu roster, seguimientos, trades y tu liga se guardan en tu cuenta y se sincronizan solos con tus otros dispositivos."
-      : "Tu roster, seguimientos, trades y tu liga se guardan solo en este navegador. Para pasarlos a tu teléfono u otra computadora, guarda un respaldo aquí y cárgalo allá.";
+      : SY.hayCuentas
+        ? "Con tu sesión iniciada todo se sincroniza solo. Sin sesión se guarda solo en este navegador; también puedes pasar tus datos con un respaldo."
+        : "Tu roster, seguimientos, trades y tu liga se guardan solo en este navegador. Para pasarlos a tu teléfono u otra computadora, guarda un respaldo aquí y cárgalo allá.";
     const b = $("#btnRespaldo");
     if (nube) b.hidden = true;
     b.onclick = () => {
@@ -788,6 +792,47 @@
     if (d) d.onclick = () => { SY.borrarEspn().then(() => location.reload()); };
   }
 
+  // Cuenta: iniciar sesión para sincronizar entre dispositivos
+  function cuentaUI() {
+    const el = $("#cuenta");
+    if (!el) return;
+    const u = SY.usuario;
+    if (u) {
+      el.innerHTML = `<h3>Tu cuenta</h3>
+        <p>Sesión iniciada como <b>${esc(u.email || "")}</b>. ${SY.modo === "nube" ? '<span class="tag verde">Sincronizado</span>' : SY.modo === "error" ? '<span class="tag rojo">Sin sincronizar</span>' : '<span class="tag gris">Conectando…</span>'}</p>
+        <p class="nota">Abre esta página en tu teléfono o en otra computadora, entra con el mismo correo y verás lo mismo. Lo que cambies en uno aparece solo en los demás.</p>
+        <button class="sec" id="btnSalir">Cerrar sesión</button>`;
+      $("#btnSalir").onclick = () => SY.salir();
+      return;
+    }
+    el.innerHTML = `<h3>Tu cuenta</h3>
+      <p>Inicia sesión para tener tu equipo, tu liga, tus trades y seguimientos en tu computadora y tu teléfono al mismo tiempo, actualizándose solos.</p>
+      <form id="formCuenta" class="fila" autocomplete="on">
+        <input type="email" id="cCorreo" placeholder="Correo" autocomplete="email" required style="flex:1;min-width:200px">
+        <input type="password" id="cClave" placeholder="Contraseña (mínimo 6)" autocomplete="current-password" required minlength="6" style="flex:1;min-width:180px">
+        <button class="btn" type="submit" id="btnEntrar">Entrar</button>
+        <button class="sec" type="button" id="btnCrear">Crear cuenta</button>
+      </form>
+      <p class="nota" id="msgCuenta">Lo que ya tienes en este dispositivo se sube a tu cuenta la primera vez que entras.</p>`;
+    const msg = (t, malo) => { $("#msgCuenta").innerHTML = malo ? `<span class="malo">${esc(t)}</span>` : esc(t); };
+    const datos = () => [$("#cCorreo").value.trim(), $("#cClave").value];
+    $("#formCuenta").onsubmit = async (e) => {
+      e.preventDefault();
+      const [c, k] = datos();
+      msg("Entrando…");
+      try { await SY.entrar(c, k); } catch (err) { msg(err.message, true); }
+    };
+    $("#btnCrear").onclick = async () => {
+      const [c, k] = datos();
+      if (!c || k.length < 6) { msg("Escribe tu correo y una contraseña de al menos 6 caracteres.", true); return; }
+      msg("Creando tu cuenta…");
+      try {
+        const r = await SY.crearCuenta(c, k);
+        if (r.confirmar) msg("Listo. Te mandamos un correo para confirmar tu cuenta: abre el enlace y luego regresa aquí y da Entrar.");
+      } catch (err) { msg(err.message, true); }
+    };
+  }
+
   // Indicador de sincronización
   function pintarSync() {
     const el = $("#sync");
@@ -796,9 +841,16 @@
     el.className = "tag " + (m === "nube" ? "verde" : m === "error" ? "rojo" : "gris");
     el.textContent = m === "nube" ? "Sincronizado" : m === "conectando" ? "Conectando…" : m === "error" ? "Sin sincronizar" : "Guardado en este dispositivo";
     el.title = m === "nube" ? "Tus cambios se guardan en tu cuenta y aparecen en tu teléfono y tu computadora." : m === "error" ? "No se pudo guardar en la nube. Tus cambios siguen en este dispositivo." : "Abre la versión publicada para sincronizar con tu teléfono.";
+    if (SY.hayCuentas) {
+      if (m === "local") { el.textContent = "Iniciar sesión"; el.className = "tag azul"; el.title = "Entra a tu cuenta para sincronizar con tu teléfono."; }
+      if (m === "nube" && SY.usuario) el.textContent = "Sincronizado · " + (SY.usuario.email || "");
+      el.style.cursor = "pointer";
+      el.onclick = () => { abrir("ajustes"); const c = $("#cuenta"); if (c) c.scrollIntoView({ behavior: "smooth" }); };
+    }
+    cuentaUI();
   }
   SY.alCambiar((que) => {
-    if (que === "modo") pintarSync();
+    if (que === "modo" || que === "usuario") pintarSync();
     if (que === "estado") { cargarRoster(); recalcularTodo(); render[actual](); }
     if (que === "espn") location.reload();
   });
