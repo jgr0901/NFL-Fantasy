@@ -205,6 +205,7 @@
     get modo() { return modo; },
     get usuario() { return usuario; },
     get hayCuentas() { return !!sb; },
+    get cliente() { return sb; },
     guardar, guardarEspn, borrarEspn, iniciar, entrar, entrarConGoogle, crearCuenta, salir,
     alCambiar: (f) => oyentes.push(f),
   };
