@@ -26,6 +26,81 @@
     };
   }
 
+  // Configuración de la liga de ESPN (mSettings) en el formato del modelo.
+  // Ids de estadísticas de ESPN: 3 yd pase, 4 TD pase, 20 INT, 24 yd carrera, 25 TD carrera, 42 yd rec, 43 TD rec,
+  // 53 recepciones, 19/26/44 conversiones de 2, 68 balón suelto, 72 balón suelto perdido, 64 capturado,
+  // 74/77/80/198/201 FG por distancia, 85 FG fallado, 86/88 PAT, 89–92 y 120–125 puntos permitidos,
+  // 95 INT, 96 balón recuperado, 97 bloqueo, 98 safety, 99 sack, 101–104 TD de defensa, 106 balón forzado,
+  // 127–136 yardas permitidas, 114/115 yd de regreso.
+  const SLOTS = { 0: "QB", 2: "RB", 4: "WR", 6: "TE", 16: "DST", 17: "K" };
+  const FLEX = { 3: ["RB", "WR"], 5: ["WR", "TE"], 23: ["RB", "WR", "TE"], 7: ["QB", "RB", "WR", "TE"] };
+  const FLEX_NOMBRE = { 3: "RB/WR", 5: "WR/TE", 23: "FLEX", 7: "OP" };
+  function configLiga(liga) {
+    const st = liga.settings || {};
+    const sc = st.scoringSettings || {}, rs = st.rosterSettings || {}, sch = st.scheduleSettings || {}, aq = st.acquisitionSettings || {};
+    const out = { equipos: st.size || (liga.teams || []).length || null };
+    // Puestos de la alineación
+    const cnt = rs.lineupSlotCounts || {};
+    if (Object.keys(cnt).length) {
+      const slots = { QB: 0, RB: 0, WR: 0, TE: 0, K: 0, DST: 0 };
+      const flexes = [];
+      Object.entries(cnt).forEach(([id, n]) => {
+        n = +n; if (!n) return;
+        if (SLOTS[id]) slots[SLOTS[id]] += n;
+        else if (FLEX[id]) flexes.push({ nombre: FLEX_NOMBRE[id], pos: FLEX[id], n });
+      });
+      out.slots = slots; out.flexes = flexes; out.banca = +(cnt[20] || 0);
+    }
+    // Semanas: temporada regular y playoffs de fantasy
+    const reg = sch.matchupPeriodCount || null;
+    const periodos = {};
+    Object.entries(sch.matchupPeriods || {}).forEach(([p, ws]) => (periodos[p] = ws));
+    if (reg) {
+      out.temporadaRegular = reg;
+      const equiposPO = sch.playoffTeamCount || 4;
+      const rondas = Math.ceil(Math.log2(Math.max(2, equiposPO)));
+      const largo = sch.playoffMatchupPeriodLength || 1;
+      const po = [];
+      for (let r = 0; r < rondas; r++) {
+        const p = reg + 1 + r;
+        const ws = periodos[p] || null;
+        if (ws) po.push(...ws);
+        else for (let k = 0; k < largo; k++) po.push(reg + 1 + r * largo + k);
+      }
+      out.playoffs = po.filter((w) => w <= 18);
+      out.lugaresPlayoff = equiposPO;
+    }
+    out.periodos = periodos;
+    if (aq.isUsingAcquisitionBudget) out.faab = { presupuesto: aq.acquisitionBudget || 100, minimo: aq.minimumBid || 0 };
+    // Puntaje
+    const items = sc.scoringItems || [];
+    if (items.length) {
+      const v = {}, te = {};
+      items.forEach((it) => {
+        v[it.statId] = it.points;
+        const ov = it.pointsOverrides || {};
+        if (ov[6] !== undefined && it.statId === 53) te.rec = ov[6] - it.points;
+      });
+      const g = (id, d) => (v[id] !== undefined ? v[id] : d);
+      const pts = {
+        py25: g(3, 0.04) * 25, ptd: g(4, 4), int: g(20, -2), sk: g(64, 0), tp: g(19, 2),
+        ry10: g(24, 0.1) * 10, rtd: g(25, 6), rey10: g(42, 0.1) * 10, rec: g(53, 0), rectd: g(43, 6),
+        fum: g(68, 0), fl: g(72, -2), ret: g(114, 0), tePrem: te.rec || 0,
+        fg0: g(80, 3), fg40: g(77, 3), fg50: g(198, g(74, 5)), fg60: g(201, g(198, g(74, 5))), fgMiss: g(85, -1),
+        pat: g(86, 1), patMiss: g(88, 0),
+        dSk: g(99, 1), dInt: g(95, 2), dFr: g(96, 2), dFf: g(106, 0), dSf: g(98, 2), dBlk: g(97, 2),
+        dTd: g(103, 6),
+      };
+      // Puntos por puntos permitidos (de 0 a 45+)
+      const pa = [[0, g(89, 5)], [6, g(90, 4)], [13, g(91, 3)], [17, g(92, 1)], [21, g(121, 0)], [27, g(122, 0)], [34, g(123, -1)], [45, g(124, -3)], [999, g(125, -5)]];
+      pts.pa = pa;
+      const ya = [[99, g(128, 0)], [199, g(129, 0)], [299, g(130, 0)], [349, g(131, 0)], [399, g(132, 0)], [449, g(133, 0)], [499, g(134, 0)], [549, g(135, 0)], [9999, g(136, 0)]];
+      pts.ya = ya;
+      out.pts = pts;
+    }
+    return out;
+  }
+
   // Convierte el archivo descargado de ESPN a una versión compacta
   function compactar(raw, miNombre) {
     const liga = raw.liga || {};
@@ -50,8 +125,12 @@
       const owners = (t.owners || []).map((o) => String(o).toUpperCase());
       const nombre = t.name || ((t.location || "") + " " + (t.nickname || "")).trim() || t.abbrev || "Equipo " + t.id;
       const dueno = (t.owners && miembros[t.owners[0]]) || "";
+      const o = (t.record && t.record.overall) || {};
+      const tc = t.transactionCounter || {};
       return { id: t.id, nombre, abrev: t.abbrev || "", dueno, owners, espnIds: ids,
-        record: t.record && t.record.overall ? t.record.overall.wins + "-" + t.record.overall.losses + (t.record.overall.ties ? "-" + t.record.overall.ties : "") : "" };
+        record: o.wins !== undefined ? o.wins + "-" + o.losses + (o.ties ? "-" + o.ties : "") : "",
+        w: o.wins || 0, l: o.losses || 0, t: o.ties || 0, pf: o.pointsFor || t.points || 0, pa: o.pointsAgainst || 0,
+        faabGastado: tc.acquisitionBudgetSpent || 0, logo: t.logo || "" };
     });
     // ¿Cuál es mi equipo? Primero por mi cuenta de ESPN (SWID), luego por nombre.
     let mio = equipos.find((e) => swid && e.owners.includes(swid));
@@ -62,14 +141,15 @@
     equipos.forEach((e) => { e.mio = e === mio; delete e.owners; });
     // Calendario de enfrentamientos de la liga
     const calendario = (liga.schedule || []).filter((m) => m.home && m.away)
-      .map((m) => ({ p: m.matchupPeriodId, h: m.home.teamId, a: m.away.teamId }));
+      .map((m) => ({ p: m.matchupPeriodId, h: m.home.teamId, a: m.away.teamId, ganador: m.winner || "UNDECIDED",
+        ph: Math.round((m.home.totalPoints || 0) * 10) / 10, pa: Math.round((m.away.totalPoints || 0) * 10) / 10 }));
     // Solo jugadores que importan (para que quepa en la nube)
     const enLiga = new Set();
     equipos.forEach((e) => e.espnIds.forEach((x) => enLiga.add(String(x))));
     Object.keys(jug).forEach((k) => { if (!enLiga.has(k) && (jug[k].own || 0) < 0.5) delete jug[k]; });
     return {
       fecha: raw.fecha || new Date().toISOString(), semana, periodo: liga.status ? liga.status.currentMatchupPeriod : null,
-      liga: { nombre: (liga.settings || {}).name || "", equipos, calendario }, jugadores: jug,
+      liga: { nombre: (liga.settings || {}).name || "", equipos, calendario, cfg: configLiga(liga) }, jugadores: jug,
     };
   }
 
@@ -101,7 +181,7 @@
       if (e.t) p.t = e.t;
     });
     D.liga = {
-      nombre: c.liga.nombre, fecha: c.fecha, calendario: c.liga.calendario || [], periodo: c.periodo || c.semana,
+      nombre: c.liga.nombre, fecha: c.fecha, calendario: c.liga.calendario || [], periodo: c.periodo || c.semana, cfg: c.liga.cfg || null,
       equipos: c.liga.equipos.map((eq) => Object.assign({}, eq, { jugadores: eq.espnIds.map((x) => aId[x]).filter(Boolean) })),
     };
     D.fuenteEspn = true;
@@ -154,7 +234,7 @@
     return "javascript:" + encodeURIComponent("(" + f.toString() + ")(" + (ligaId ? JSON.stringify(String(ligaId)) : "null") + "," + (destino ? JSON.stringify(destino) : "null") + ");void 0");
   }
 
-  global.EspnLocal = { leer, guardar, borrar, compactar, aplicar, codigoBoton };
+  global.EspnLocal = { leer, guardar, borrar, compactar, aplicar, codigoBoton, configLiga };
   const c = leer();
   if (c && global.NFL_DATA) aplicar(global.NFL_DATA, c);
 })(window);

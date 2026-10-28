@@ -3,33 +3,30 @@ on:
   push:
     branches: [claude/project-thread-ijx0aj]
     paths: [.github/workflows/diagnostico.yml]
+permissions:
+  contents: write
 jobs:
   probar:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - name: Probar fuentes
         run: |
-          O="Origin: https://jgr0901.github.io"
-          for u in \
-            "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/2026/segments/0/leaguedefaults/3?view=kona_player_info&scoringPeriodId=8" \
-            "https://site.api.espn.com/apis/fantasy/v2/games/ffl/news/players?limit=5" \
-            "https://site.api.espn.com/apis/site/v2/sports/football/nfl/news?limit=5" \
-            "https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes/4241389/overview" \
-            "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard" \
-            "https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=401772510" \
-            "https://api.sleeper.app/v1/players/nfl/trending/add?lookback_hours=48&limit=5" \
-            "https://api.open-meteo.com/v1/forecast?latitude=40&longitude=-75&hourly=wind_speed_10m&forecast_days=1" ; do
-            echo "=================== $u"
-            curl -s -D h.txt -o b.txt -H "$O" -H 'X-Fantasy-Filter: {"players":{"limit":3,"sortPercOwned":{"sortPriority":1,"sortAsc":false}}}' --max-time 30 "$u"
-            grep -i -E "^HTTP|access-control-allow-origin|content-type" h.txt
-            head -c 1500 b.txt; echo
-          done
-          echo "=================== news athlete fields"
-          curl -s "https://site.api.espn.com/apis/fantasy/v2/games/ffl/news/players?limit=3" | python3 -c "import json,sys; d=json.load(sys.stdin); print(list(d.keys())); f=d.get('feed') or d.get('articles') or []; print(json.dumps(f[:2],indent=1)[:4000])" || true
-          echo "=================== scoreboard events"
-          curl -s "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?week=7&seasontype=2" | python3 -c "import json,sys; d=json.load(sys.stdin); e=d['events'][0]; print(e['id'], e['name'], e['status']['type'])" || true
-          EV=$(curl -s "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?week=7&seasontype=2" | python3 -c "import json,sys; print(json.load(sys.stdin)['events'][0]['id'])")
-          curl -s "https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=$EV" | python3 -c "
-          import json,sys; d=json.load(sys.stdin); b=d['boxscore']['players'][0]
-          for s in b['statistics']: print(s['name'], s.get('keys') or s.get('labels'), json.dumps(s['athletes'][:1])[:300])
-          " || true
+          echo "== preflight ESPN"
+          curl -s -D - -o /dev/null -X OPTIONS -H "Origin: https://jgr0901.github.io" -H "Access-Control-Request-Method: GET" -H "Access-Control-Request-Headers: x-fantasy-filter" "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/2026/segments/0/leaguedefaults/3?view=kona_player_info" | grep -i -E "^HTTP|access-control"
+          mkdir -p pruebas
+          curl -s "https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes/4241389/overview" > pruebas/overview.json
+          curl -s "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?week=7&seasontype=2" > pruebas/scoreboard7.json
+          curl -s "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?week=8&seasontype=2" > pruebas/scoreboard8.json
+          EV=$(python3 -c "import json; print(json.load(open('pruebas/scoreboard7.json'))['events'][0]['id'])")
+          curl -s "https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=$EV" > pruebas/summary.json
+          python3 -c "
+          import json; d=json.load(open('pruebas/overview.json')); print(list(d.keys())); n=d.get('news',[]); print(json.dumps(n[:2])[:1500]); print(json.dumps(d.get('rotowire') or d.get('fantasy') or {})[:800])
+          s=json.load(open('pruebas/summary.json')); print(list(s.keys())); print(json.dumps(s.get('scoringPlays',[])[:3])[:1500])
+          "
+          ls -la pruebas
+      - name: Guardar
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
+          git add pruebas && git commit -m "Pruebas temporales de ESPN" && git push
