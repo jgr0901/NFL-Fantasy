@@ -232,7 +232,8 @@ def main():
                              as_, hs,
                              None if g["spread_line"] in ("", "NA") else float(g["spread_line"]),
                              None if g["total_line"] in ("", "NA") else float(g["total_line"]),
-                             g["roof"] if g["roof"] != "NA" else ""])
+                             g["roof"] if g["roof"] != "NA" else "",
+                             g.get("stadium", "") if g.get("stadium") != "NA" else ""])
     # Semana a proyectar: la primera donde la mayoría de los partidos no se ha jugado
     sem_espn = max([p[1] for p in partidos] or [1])
     for w in sorted({p[1] for p in partidos}):

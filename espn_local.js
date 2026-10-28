@@ -227,7 +227,7 @@
           a.href = URL.createObjectURL(new Blob([JSON.stringify(datos)], { type: "application/json" }));
           a.download = "espn_liga.json";
           document.body.appendChild(a); a.click(); a.remove();
-          alert("Listo: se descargó espn_liga.json (" + (liga.teams || []).length + " equipos). Ahora cárgalo en tu página de NFL Fantasy, pestaña \"Liga y datos\".");
+          alert("Listo: se descargó espn_liga.json (" + (liga.teams || []).length + " equipos). Ahora cárgalo en tu página de NFL Fantasy, pestaña \"Liga\".");
         } catch (e) { alert("No se pudo leer tu liga de ESPN: " + e.message + "\n¿Abriste la página de tu liga con tu sesión iniciada?"); }
       })();
     };

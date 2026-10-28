@@ -19,16 +19,17 @@
       <div>
         <h1><span class="t-nfl">NFL</span> <span class="t-fan">FANTASY</span></h1>
         <p id="subtitulo" class="sub"></p>
-        <span id="sync" class="tag gris"></span>
+        <div class="estado-top"><span id="sync" class="tag gris"></span> <span id="estadoEspn" class="tag gris">ESPN…</span></div>
       </div>
+      <button id="btnAyuda" class="ayuda-btn" type="button" aria-label="Cómo funciona">?</button>
     </div>
     <nav id="tabs" class="tabs">
-      <button data-tab="equipo" class="on">Mi equipo</button>
-      <button data-tab="partidos">Partidos</button>
-      <button data-tab="jugadores">Jugadores</button>
-      <button data-tab="trades">Analizar trade</button>
-      <button data-tab="objetivos">Movimientos</button>
-      <button data-tab="ajustes">Liga y datos</button>
+      <button data-tab="equipo" class="on"><span class="ico" aria-hidden="true">🏈</span><span class="lbl">Mi equipo</span></button>
+      <button data-tab="partidos"><span class="ico" aria-hidden="true">📅</span><span class="lbl">Partidos</span></button>
+      <button data-tab="jugadores"><span class="ico" aria-hidden="true">📋</span><span class="lbl">Jugadores</span></button>
+      <button data-tab="trades"><span class="ico" aria-hidden="true">⚖️</span><span class="lbl">Trades</span></button>
+      <button data-tab="objetivos"><span class="ico" aria-hidden="true">🔄</span><span class="lbl">Movimientos</span></button>
+      <button data-tab="liga"><span class="ico" aria-hidden="true">🏆</span><span class="lbl">Liga</span></button>
     </nav>
   </header>
 
@@ -38,7 +39,7 @@
     <section id="tab-jugadores" class="tab"></section>
     <section id="tab-trades" class="tab"></section>
     <section id="tab-objetivos" class="tab"></section>
-    <section id="tab-ajustes" class="tab"></section>
+    <section id="tab-liga" class="tab"></section>
   </main>
 
   <div id="modal" class="modal" hidden>
@@ -51,12 +52,17 @@
   <datalist id="listaJugadores"></datalist>
 
   <script src="data.js"></script>
-  <script src="mi_equipo.js"></script>
+  <script src="historial.js"></script>
   <script src="espn_local.js"></script>
   <script src="vendor/supabase.js"></script>
   <script src="config_cuentas.js"></script>
   <script src="sync.js"></script>
   <script src="modelo.js"></script>
+  <script src="en_linea.js"></script>
+  <script src="avisos.js"></script>
   <script src="app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) navigator.serviceWorker.register("sw.js").catch(function () {});
+  </script>
 </body>
 </html>
