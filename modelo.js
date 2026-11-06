@@ -30,19 +30,57 @@
     return z > 0 ? 1 - p : p;
   }
 
-  // ---------------- Configuración de la liga (borregos fantasy, ESPN) ----------------
+  // ---------------- Parámetros del modelo ----------------
+  // Valores de partida. Cada día generar_historial.js prueba otras combinaciones contra lo que
+  // realmente pasó en las semanas jugadas y guarda en historial.js las que se equivocaron menos.
+  //   decay: cuánto pesa una semana contra la siguiente más reciente (más bajo = más peso a lo reciente)
+  //   tdReg: qué tanto se jalan los TDs hacia lo que sugieren sus yardas y su uso en zona roja
+  //   vegas: peso de la línea de las casas de apuestas en el marcador
+  //   sdPartido: qué tanto varía el resultado de un partido NFL (para la probabilidad de ganar)
+  //   espn: peso de la proyección de ESPN en la semana actual
+  //   companeros: qué parte del volumen de un jugador que no juega se reparte entre sus compañeros
+  //   sdEscala: corrige qué tanto varía cada jugador de semana a semana, para que el rango
+  //             "de semana mala a buena" de verdad cubra 8 de cada 10 semanas
+  const PAR_BASE = { decay: 0.88, tdReg: 0.4, vegas: 0.6, sdPartido: 13, espn: 0.5, companeros: 0.7, sdEscala: 1.4 };
+  const RANGO = 1.2816; // ± este número de desviaciones cubre el 80% de los casos
+  const HIST = global.NFL_HIST;
+  const PAR = Object.assign({}, PAR_BASE,
+    !D.modoHistorial && HIST && HIST.temporada === D.temporada && HIST.ajuste ? HIST.ajuste.par || {} : {},
+    D.parametros || {});
+
+  // ---------------- Configuración de la liga ----------------
+  // Por defecto la liga "borregos fantasy" (ESPN, PPR, 10 equipos). Si conectas tu liga de ESPN,
+  // se reemplaza con su configuración real (puntaje, puestos, equipos y semanas de playoffs).
   const cfg = {
     equipos: 10,
-    slots: { QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, K: 1, DST: 1 },
-    flex: ["RB", "WR"],
+    slots: { QB: 1, RB: 2, WR: 2, TE: 1, K: 1, DST: 1 },
+    flexes: [{ nombre: "RB/WR", pos: ["RB", "WR"], n: 1 }],
+    banca: 7,
+    playoffs: [15, 16, 17],
+    temporadaRegular: 14,
+    faab: null,
+    deLiga: false,
     pts: {
       py25: 1, ptd: 4, int: -2, sk: -0.5, tp: 2, ry10: 1, rtd: 6, rey10: 1, rec: 1, rectd: 6,
       fum: 1, fl: -2, ret: 0.01, tePrem: 0,
       fg0: 3, fg40: 4, fg50: 5, fg60: 5, fgMiss: 1, pat: 1, patMiss: 1,
       dSk: 1, dInt: 2, dFr: 2, dFf: 1, dSf: 2, dBlk: 2, dTd: 6, ya100: 5,
       pa: [[0, 10], [6, 7], [13, 4], [17, 1], [21, 1], [27, 1], [34, -1], [45, -3], [999, -5]],
+      ya: [[99, 5]], // yardas permitidas: [hasta, puntos]
     },
   };
+  if (D.liga && D.liga.cfg) aplicarCfgLiga(D.liga.cfg);
+  function aplicarCfgLiga(c) {
+    if (c.equipos) cfg.equipos = c.equipos;
+    if (c.slots && (c.slots.QB || c.slots.RB)) { cfg.slots = c.slots; cfg.flexes = c.flexes || []; }
+    if (c.banca !== undefined) cfg.banca = c.banca;
+    if (c.playoffs && c.playoffs.length) cfg.playoffs = c.playoffs;
+    if (c.temporadaRegular) cfg.temporadaRegular = c.temporadaRegular;
+    cfg.faab = c.faab || null;
+    if (c.pts) Object.assign(cfg.pts, c.pts);
+    cfg.deLiga = true;
+  }
+  cfg.flex = Array.from(new Set(cfg.flexes.flatMap((f) => f.pos))); // compatibilidad
 
   // ---------------- Partidos ----------------
   const partidos = D.partidos.map((g) => ({
@@ -92,6 +130,8 @@
   const EP = D.equiposPrev || {};
   const LGP = {};
   ["pf", "py", "ry", "ptd", "rtd"].forEach((k) => (LGP[k] = mean(Object.values(EP).map((x) => x[k] || 0))));
+  // Semana 1 (sin partidos jugados): se usan los promedios de la temporada previa
+  ["pf", "py", "ry", "ptd", "rtd"].forEach((k) => { if (!LG[k]) LG[k] = LGP[k] || { pf: 22, py: 210, ry: 115, ptd: 1.4, rtd: 0.9 }[k]; });
 
   // Ratings ajustados por rival (estilo SRS), con la temporada previa como punto de partida.
   function ajustar(kFor, kAg, hfa, priorG) {
@@ -139,8 +179,8 @@
     const modelo = { home: H.pts, away: A.pts };
     const vegas = g.spread !== null && g.total !== null;
     if (vegas) { // mezcla con la línea de las casas de apuestas
-      H.pts = 0.6 * (g.total / 2 + g.spread / 2) + 0.4 * H.pts;
-      A.pts = 0.6 * (g.total / 2 - g.spread / 2) + 0.4 * A.pts;
+      H.pts = PAR.vegas * (g.total / 2 + g.spread / 2) + (1 - PAR.vegas) * H.pts;
+      A.pts = PAR.vegas * (g.total / 2 - g.spread / 2) + (1 - PAR.vegas) * A.pts;
     }
     [H, A].forEach((x) => {
       x.pts = Math.max(6, x.pts);
@@ -149,17 +189,33 @@
       const r = Math.max(0.05, x.ptd) / (Math.max(0.05, x.ptd) + Math.max(0.05, x.rtd));
       x.ptd = td * r; x.rtd = td * (1 - r);
     });
-    const pHome = phi((H.pts - A.pts) / 13);
+    const pHome = phi((H.pts - A.pts) / PAR.sdPartido);
     return (cachePred[g.id] = { home: H, away: A, pHome, modelo, vegas });
   }
   const base = {};
   TEAMS.forEach((t) => (base[t] = { pts: LG.pf + R.pts.o[t], py: LG.py + R.py.o[t], ry: LG.ry + R.ry.o[t] }));
+  // Clima por partido (lo llena la página con el pronóstico): { viento (km/h), lluvia (mm), temp (°C) }
+  const CLIMA = {};
+  function efectoClima(g) {
+    const c = CLIMA[g.id];
+    if (!c || g.techo === "dome" || g.techo === "closed") return { pase: 1, k: 1, nota: "" };
+    const mph = c.viento / 1.609;
+    let pase = 1, k = 1;
+    const notas = [];
+    if (mph > 15) { pase -= Math.min(0.15, 0.012 * (mph - 15)); k -= Math.min(0.25, 0.02 * (mph - 15)); notas.push(`viento ${Math.round(mph)} mph`); }
+    if (c.lluvia >= 1) { pase -= Math.min(0.06, 0.02 * c.lluvia); k -= 0.04; notas.push("lluvia"); }
+    if (c.nieve >= 0.5) { pase -= 0.05; k -= 0.08; notas.push("nieve"); }
+    if (c.temp <= -7) { pase -= 0.03; k -= 0.05; notas.push(`${Math.round(c.temp)}°C`); }
+    return { pase, k, nota: notas.join(", ") };
+  }
   function ambiente(t, g) {
     const pr = predecirPartido(g), x = g.home === t ? pr.home : pr.away;
+    const cl = efectoClima(g);
     return {
-      pase: clamp(Math.pow(x.py / base[t].py, 0.8), 0.7, 1.35),
-      carrera: clamp(Math.pow(x.ry / base[t].ry, 0.8), 0.7, 1.35),
+      pase: clamp(Math.pow(x.py / base[t].py, 0.8), 0.7, 1.35) * cl.pase,
+      carrera: clamp(Math.pow(x.ry / base[t].ry, 0.8), 0.7, 1.35) * (cl.pase < 1 ? 1 + (1 - cl.pase) * 0.4 : 1),
       td: clamp(x.pts / base[t].pts, 0.6, 1.5),
+      k: cl.k, clima: cl.nota,
       ptsRival: g.home === t ? pr.away.pts : pr.home.pts,
     };
   }
@@ -186,8 +242,9 @@
   function puntosDST(f) { // f = [w, rival, sk, int, fr, ff, td, sf, blk, pa, ya, ...]
     const P = cfg.pts;
     return f[2] * P.dSk + f[3] * P.dInt + f[4] * P.dFr + f[5] * P.dFf + f[6] * P.dTd + f[7] * P.dSf +
-      f[8] * P.dBlk + puntosPA(f[9]) + (f[10] < 100 ? P.ya100 : 0);
+      f[8] * P.dBlk + puntosPA(f[9]) + puntosYA(f[10]);
   }
+  function puntosYA(ya) { for (const [lim, v] of cfg.pts.ya || []) if (ya <= lim) return v; return 0; }
   const filaObj = (r) => { const o = {}; D.stats.forEach((k) => (o[k] = S(r, k) || 0)); return o; };
   const arrObj = (a) => { const o = {}; D.stats.forEach((k, i) => (o[k] = a[i] || 0)); return o; };
 
@@ -195,6 +252,28 @@
   const tot = { pyd: 0, ptd: 0, ryd: 0, rtd: 0, recyd: 0, rectd: 0 };
   D.jugadores.forEach((p) => p.p !== "K" && p.w.forEach((r) => Object.keys(tot).forEach((k) => (tot[k] += S(r, k)))));
   const TASA = { ptd: tot.ptd / tot.pyd, rtd: tot.rtd / tot.ryd, rectd: tot.rectd / tot.recyd };
+  if (!(tot.pyd > 2000)) Object.assign(TASA, { ptd: 0.0063, rtd: 0.0085, rectd: 0.0066 }); // semana 1: promedios históricos
+  // Uso (u = [semana, % de snaps, acarreos en zona roja, targets en zona roja, acarreos dentro de la 5])
+  const totRZ = { car: 0, tgt: 0, rtd: 0, rectd: 0 };
+  D.jugadores.forEach((p) => {
+    if (!p.u || p.p === "K") return;
+    const ws = new Set(p.u.map((u) => u[0]));
+    p.u.forEach((u) => { totRZ.car += u[2]; totRZ.tgt += u[3]; });
+    p.w.forEach((r) => { if (ws.has(r[0])) { totRZ.rtd += S(r, "rtd"); totRZ.rectd += S(r, "rectd"); } });
+  });
+  const TASA_RZ = { car: totRZ.car ? totRZ.rtd / totRZ.car : 0, tgt: totRZ.tgt ? totRZ.rectd / totRZ.tgt : 0 };
+  function resumenUso(p) {
+    const u = (p.u || []).filter((x) => p.w.some((r) => r[0] === x[0]));
+    if (!u.length) return null;
+    const pesos = u.map((x) => pesoSemana(x[0])), G = sum(pesos);
+    const prom = (i) => sum(u.map((x, k) => x[i] * pesos[k])) / G;
+    const ult = u.slice(-2);
+    const snapUlt = mean(ult.map((x) => x[1]));
+    return {
+      filas: u, snap: prom(1), rzCar: prom(2), rzTgt: prom(3), gl: prom(4),
+      snapUlt, tendencia: snapUlt - mean(u.slice(0, -2).map((x) => x[1]).concat(u.length <= 2 ? [snapUlt] : [])),
+    };
+  }
 
   // ---------------- Defensas (D/ST) ----------------
   const DEF = D.defensas || {};
@@ -228,19 +307,27 @@
       ePA += w * puntosPA(x); wsum += w;
     }
     const P = cfg.pts;
-    const pts = sk * P.dSk + int * P.dInt + fr * P.dFr + a.ff * P.dFf + a.td * P.dTd + a.sf * P.dSf + a.blk * P.dBlk + ePA / wsum;
-    return { pts, s: { sk, int, fr, pa: paMedia } };
+    const pr = predecirPartido(g), riv = g.home === t ? pr.away : pr.home;
+    const yaMedia = riv.py + riv.ry;
+    let eYA = 0, ysum = 0;
+    for (let y = 100; y <= 600; y += 10) {
+      const w = Math.exp(-((y - yaMedia) ** 2) / (2 * 65 * 65));
+      eYA += w * puntosYA(y); ysum += w;
+    }
+    const pts = sk * P.dSk + int * P.dInt + fr * P.dFr + a.ff * P.dFf + a.td * P.dTd + a.sf * P.dSf + a.blk * P.dBlk + ePA / wsum + eYA / ysum;
+    return { pts, s: { sk, int, fr, pa: paMedia, ya: yaMedia } };
   }
 
   // ---------------- Proyección base de cada jugador ----------------
   const ULT = D.ultimaSemana;
-  const pesoSemana = (w) => Math.pow(0.88, ULT - w);
+  const pesoSemana = (w) => Math.pow(PAR.decay, ULT - w);
   const jugadores = D.jugadores.map((p) => {
     const ultimaAp = p.w.length ? p.w[p.w.length - 1][0] : 0;
     const perdidos = Object.keys(tg[p.t] || {}).filter((w) => +w > ultimaAp).length;
     const j = {
       id: p.id, n: p.n, pos: p.p, t: p.t, foto: p.h, estado: p.s || "", lesion: p.inj || null,
       espn: p.espn || null, exp: p.exp, filas: p.w, gp: p.w.length, prev: p.prev || null, perdidos,
+      eid: p.e || null, sl: p.sl || null, uso: resumenUso(p),
     };
     if (p.p === "K") {
       const pts = p.w.map((r) => puntosK([r[2], r[3], r[4], r[5]]));
@@ -264,10 +351,25 @@
       if (!G) b[k] = prior ? prior[k] * 0.95 : 0;
       else b[k] = (G * prom[k] + kPrior * (prior ? prior[k] : 0)) / (G + kPrior);
     });
-    // Regresión de TDs hacia lo esperado por yardas
-    b.ptd = 0.6 * b.ptd + 0.4 * b.pyd * TASA.ptd;
-    b.rtd = 0.6 * b.rtd + 0.4 * b.ryd * TASA.rtd;
-    b.rectd = 0.6 * b.rectd + 0.4 * b.recyd * TASA.rectd;
+    // Regresión de TDs hacia lo esperado por yardas y por uso en zona roja
+    const U = j.uso;
+    const r = PAR.tdReg;
+    if (U && TASA_RZ.car && G >= 2) {
+      const rz = Math.min(0.9, r + 0.1); // con datos de zona roja se confía un poco más en lo esperado
+      b.rtd = (1 - rz) * b.rtd + (rz / 2) * b.ryd * TASA.rtd + (rz / 2) * U.rzCar * TASA_RZ.car;
+      b.rectd = (1 - rz) * b.rectd + (rz / 2) * b.recyd * TASA.rectd + (rz / 2) * U.rzTgt * TASA_RZ.tgt;
+    } else {
+      b.rtd = (1 - r) * b.rtd + r * b.ryd * TASA.rtd;
+      b.rectd = (1 - r) * b.rectd + r * b.recyd * TASA.rectd;
+    }
+    b.ptd = (1 - r) * b.ptd + r * b.pyd * TASA.ptd;
+    // Cambio de rol: si en sus últimos 2 partidos jugó muchos más (o menos) snaps que antes,
+    // su volumen se ajusta en esa dirección (como hacen FantasyPros y PlayerProfiler con el uso).
+    if (U && p.p !== "QB" && U.filas.length >= 3 && U.snap > 0.05) {
+      const f = clamp(Math.pow(U.snapUlt / U.snap, 0.6), 0.8, 1.25);
+      j.factorRol = f;
+      ["car", "ryd", "rtd", "tgt", "rec", "recyd", "rectd", "ay"].forEach((k) => (b[k] *= f));
+    }
     j.base = b;
     return j;
   });
@@ -281,6 +383,11 @@
   });
   const porId = {};
   jugadores.forEach((j) => (porId[j.id] = j));
+  const ofensivosDe = {}; // equipo -> jugadores ofensivos (para repartir el volumen de las bajas)
+  jugadores.forEach((j) => {
+    if (!j.base || !["QB", "RB", "WR", "TE"].includes(j.pos) || j.estado === "CUT" || j.estado === "RET") return;
+    (ofensivosDe[j.t] = ofensivosDe[j.t] || []).push(j);
+  });
 
   // Probabilidad de que juegue en una semana. ESPN es la fuente principal del estado.
   const ESPN_INJ = {
@@ -293,6 +400,7 @@
     out: [0, "Fuera esta semana (tu ajuste)"], ir: [0, "Fuera varias semanas (tu ajuste)"],
   };
   function disponibilidad(j, w) {
+    if (D.modoHistorial) return j.gp && j.perdidos >= 2 ? { f: 0.5, nota: "" } : { f: 1, nota: "" };
     const ov = (global.NFL_AJUSTES || {})[j.id];
     if (ov && AJ[ov.est]) {
       const hasta = ov.est === "ir" ? (ov.hasta || semanaProy + 3) : ov.est === "activo" ? 99 : semanaProy;
@@ -319,30 +427,102 @@
     return { f: 1, nota: "" };
   }
 
+  // ---------------- Bajas de compañeros ----------------
+  // Si un jugador no va a jugar, sus targets y acarreos se reparten entre sus compañeros según lo que
+  // ya reciben (un poco más a los de su misma posición). Si falta el QB titular, el suplente hereda su
+  // volumen de pase con menos eficiencia y sus receptores bajan un poco.
+  // Solo cuentan las bajas de jugadores que venían jugando: si ya lleva 2+ partidos fuera, sus
+  // compañeros ya reflejan ese volumen en sus promedios.
+  const cacheEq = new Map();
+  function bajasEquipo(t, w) {
+    const k = t + "|" + w;
+    if (cacheEq.has(k)) return cacheEq.get(k);
+    const out = { tgt: {}, car: {}, sustituto: null, qb: null, eficPase: 1, notas: {} };
+    cacheEq.set(k, out);
+    const js = ofensivosDe[t] || [];
+    if (!PAR.companeros || !js.length) return out;
+    const est = js.map((j) => ({ j, f: disponibilidad(j, w).f, peso: j.perdidos === 0 ? 1 : j.perdidos === 1 ? 0.5 : 0 }));
+    [["tgt", ["WR", "TE", "RB"], "targets"], ["car", ["RB"], "acarreos"]].forEach(([key, posOk, txt]) => {
+      let vac = 0;
+      const quien = [], posFalta = new Set();
+      est.forEach((e) => {
+        if (e.j.pos === "QB") return; // lo del QB lo hereda su suplente (abajo)
+        const v = (1 - e.f) * e.peso * (e.j.base[key] || 0);
+        if (v >= 0.7) { vac += v; quien.push(e.j.n); posFalta.add(e.j.pos); }
+      });
+      if (vac < 0.7) return;
+      const elig = est.filter((e) => e.f > 0 && posOk.includes(e.j.pos) && (e.j.base[key] || 0) >= 0.3 && !quien.includes(e.j.n));
+      const peso = (e) => e.j.base[key] * (posFalta.has(e.j.pos) ? 1.6 : 1);
+      const nombres = quien.length > 2 ? quien.slice(0, 2).join(", ") + ` y ${quien.length - 2} más` : quien.join(" y ");
+      const tot = sum(elig.map(peso));
+      if (!tot) return;
+      elig.forEach((e) => {
+        const extra = (PAR.companeros * vac * peso(e)) / tot;
+        const f = clamp(1 + extra / e.j.base[key], 1, 1.6);
+        if (f < 1.03) return;
+        out[key][e.j.id] = f;
+        const nota = `+${Math.round((f - 1) * 100)}% ${txt} por la baja de ${nombres}`;
+        out.notas[e.j.id] = out.notas[e.j.id] ? out.notas[e.j.id] + " · " + nota : nota;
+      });
+    });
+    // QB titular fuera
+    const qbs = est.filter((e) => e.j.pos === "QB").sort((a, b) => b.j.base.att - a.j.base.att);
+    const q1 = qbs[0];
+    if (q1 && q1.peso > 0 && q1.f < 0.6 && q1.j.base.att >= 15) {
+      const falta = (1 - q1.f) * q1.peso;
+      out.eficPase = 1 - 0.12 * falta;
+      const q2 = qbs.slice(1).find((e) => e.f > 0);
+      if (q2) {
+        out.sustituto = q2.j.id; out.qb = q1.j; out.faltaQB = falta;
+        out.notas[q2.j.id] = `Sería titular por la baja de ${q1.j.n}`;
+      }
+      js.forEach((j) => {
+        if (j.pos !== "WR" && j.pos !== "TE") return;
+        const n = `${q1.j.n} (QB) no juega: menos yardas y TDs por pase`;
+        out.notas[j.id] = out.notas[j.id] ? out.notas[j.id] + " · " + n : n;
+      });
+    }
+    return out;
+  }
+
   // Proyección de un jugador en un partido concreto
   function proyectarPartido(j, g) {
     const rival = g.home === j.t ? g.away : "@" + g.home;
     const disp = disponibilidad(j, g.w);
-    let pts, s = null;
+    let pts, s = null, companeros = "";
     const a = ambiente(j.t, g);
     if (j.pos === "DST") { const r = proyectarDST(j.t, g); pts = r.pts; s = r.s; }
-    else if (j.pos === "K") { pts = j.baseK * clamp(Math.pow(a.td, 0.6), 0.75, 1.3); }
+    else if (j.pos === "K") { pts = j.baseK * clamp(Math.pow(a.td, 0.6), 0.75, 1.3) * a.k; }
     else {
-      const b = j.base; s = {};
+      const bq = bajasEquipo(j.t, g.w);
+      let b = j.base;
+      s = {};
+      if (bq.sustituto === j.id) { // el suplente hereda el volumen de pase del titular
+        b = Object.assign({}, j.base);
+        const q = bq.qb.base, m = bq.faltaQB;
+        [["att", 1], ["cmp", 0.95], ["pyd", 0.85], ["ptd", 0.8], ["int", 1.1], ["sk", 1.1]].forEach(([k, ef]) => {
+          b[k] = Math.max(j.base[k], m * q[k] * ef + (1 - m) * j.base[k]);
+        });
+        b.car = Math.max(j.base.car, m * q.car * 0.7); b.ryd = Math.max(j.base.ryd, m * q.ryd * 0.6);
+      }
+      const fT = bq.tgt[j.id] || 1, fC = bq.car[j.id] || 1, ef = j.pos === "QB" ? 1 : bq.eficPase;
       s.att = b.att * a.pase; s.cmp = b.cmp * a.pase; s.pyd = b.pyd * a.pase;
       s.ptd = b.ptd * a.td; s.int = b.int; s.sk = b.sk;
-      s.car = b.car * a.carrera; s.ryd = b.ryd * a.carrera; s.rtd = b.rtd * a.td;
-      s.tgt = b.tgt * a.pase; s.rec = b.rec * a.pase; s.recyd = b.recyd * a.pase; s.rectd = b.rectd * a.td;
+      s.car = b.car * a.carrera * fC; s.ryd = b.ryd * a.carrera * fC; s.rtd = b.rtd * a.td * fC;
+      s.tgt = b.tgt * a.pase * fT; s.rec = b.rec * a.pase * fT * (0.5 + 0.5 * ef);
+      s.recyd = b.recyd * a.pase * fT * ef; s.rectd = b.rectd * a.td * fT * ef;
+      companeros = bq.notas[j.id] || "";
       s.fl = b.fl; s.fum = b.fum; s.tp = b.tp; s.ts = b.ts; s.ay = b.ay; s.ret = b.ret;
       pts = puntos(s, j.pos, false);
     }
     // Mezcla con la proyección de ESPN para la semana actual, si existe
     let espn = null;
+    const ptsModelo = pts;
     if (j.espn && j.espn.ps !== null && j.espn.ps !== undefined && g.w === semanaProy) {
       espn = j.espn.ps;
-      if (espn > 0) pts = 0.5 * pts + 0.5 * espn;
+      if (espn > 0) pts = (1 - PAR.espn) * pts + PAR.espn * espn;
     }
-    return { g, s, pts: pts * disp.f, ptsSano: pts, disp, rival, amb: a, espn };
+    return { g, s, pts: pts * disp.f, ptsSano: pts, ptsModelo: ptsModelo * disp.f, disp, rival, amb: a, espn, companeros };
   }
   const cacheSem = new Map();
   function proyectarSemana(j, w) {
@@ -363,14 +543,19 @@
     return j.filas.map((r) => { const s = filaObj(r); return { w: r[0], rival: r[1], pts: puntos(s, j.pos, true), s }; });
   }
 
+  function limpiarCache() {
+    Object.keys(cachePred).forEach((k) => delete cachePred[k]);
+    cacheSem.clear();
+    cacheEq.clear();
+  }
+
   // ---------------- Cálculo global ----------------
   let tabla = [];
   let reemplazo = {};
-  const SEM_PLAYOFF = [15, 16, 17];
+  const SEM_PLAYOFF = cfg.playoffs;
   const POS = ["QB", "RB", "WR", "TE", "K", "DST"];
   function recalcular() {
-    Object.keys(cachePred).forEach((k) => delete cachePred[k]);
-    cacheSem.clear();
+    limpiarCache();
     tabla = jugadores.map((j) => {
       const reales = puntosReales(j);
       const ppg = reales.length ? mean(reales.map((x) => x.pts)) : 0;
@@ -391,7 +576,7 @@
       const pts = reales.map((x) => x.pts);
       const ref = sem.ptsSano || sano;
       const sdObs = pts.length >= 3 ? Math.sqrt(mean(pts.map((x) => (x - ppg) ** 2))) : 0;
-      const sd = pts.length >= 3 ? 0.5 * sdObs + 0.5 * 0.45 * ref : 0.45 * ref;
+      const sd = (pts.length >= 3 ? 0.5 * sdObs + 0.5 * 0.45 * ref : 0.45 * ref) * PAR.sdEscala;
       let tdReal = 0, tdEsp = 0;
       if (j.base) {
         reales.forEach((x) => {
@@ -411,14 +596,16 @@
     POS.forEach((p) => (orden[p] = tabla.filter((x) => x.j.pos === p).sort((a, b) => b.ros - a.ros)));
     const usados = {};
     POS.forEach((p) => (usados[p] = n * (sl[p] || 0)));
-    for (let i = 0; i < n * (sl.FLEX || 0); i++) {
-      let mejor = null;
-      cfg.flex.forEach((p) => {
-        const c = orden[p][usados[p]];
-        if (c && (!mejor || c.ros > orden[mejor][usados[mejor]].ros)) mejor = p;
-      });
-      if (mejor) usados[mejor]++;
-    }
+    cfg.flexes.forEach((fx) => {
+      for (let i = 0; i < n * fx.n; i++) {
+        let mejor = null;
+        fx.pos.forEach((p) => {
+          const c = orden[p] && orden[p][usados[p]];
+          if (c && (!mejor || c.ros > orden[mejor][usados[mejor]].ros)) mejor = p;
+        });
+        if (mejor) usados[mejor]++;
+      }
+    });
     const banca = { QB: 0.4, RB: 0.8, WR: 0.8, TE: 0.4, K: 0, DST: 0.2 };
     reemplazo = {};
     POS.forEach((p) => {
@@ -435,8 +622,10 @@
   }
 
   // ---------------- Alineación y trades ----------------
-  function alineacion(ids, w) {
+  // fnPts (opcional): otra forma de dar los puntos de cada jugador, p. ej. sus puntos reales
+  function alineacion(ids, w, fnPts) {
     const ps = ids.filter((id) => porId[id]).map((id) => {
+      if (fnPts) return { id, pos: porId[id].pos, pts: fnPts(id) };
       const pr = proyectarSemana(porId[id], w);
       return { id, pos: porId[id].pos, pts: pr.pts, pr };
     }).sort((a, b) => b.pts - a.pts);
@@ -448,15 +637,17 @@
         titulares.push(Object.assign({ slot }, libres.splice(idx, 1)[0]));
       }
     };
-    ["QB", "RB", "WR", "TE"].forEach((p) => tomar((x) => x.pos === p, cfg.slots[p], p));
-    tomar((x) => cfg.flex.includes(x.pos), cfg.slots.FLEX, "RB/WR");
-    tomar((x) => x.pos === "DST", cfg.slots.DST, "D/ST");
-    tomar((x) => x.pos === "K", cfg.slots.K, "K");
+    ["QB", "RB", "WR", "TE"].forEach((p) => tomar((x) => x.pos === p, cfg.slots[p] || 0, p));
+    // Los flex más restringidos primero (p. ej. RB/WR antes que QB/RB/WR/TE)
+    cfg.flexes.slice().sort((a, b) => a.pos.length - b.pos.length).forEach((fx) => tomar((x) => fx.pos.includes(x.pos), fx.n, fx.nombre));
+    tomar((x) => x.pos === "DST", cfg.slots.DST || 0, "D/ST");
+    tomar((x) => x.pos === "K", cfg.slots.K || 0, "K");
     return { titulares, banca: libres, pts: sum(titulares.map((x) => x.pts)) };
   }
+  const ULTIMA_FANTASY = Math.max(...cfg.playoffs);
   function puntosRestoTemporada(ids, hasta) {
     let t = 0;
-    for (let w = semanaProy; w <= Math.min(hasta || 17, SEMANAS); w++) t += alineacion(ids, w).pts;
+    for (let w = semanaProy; w <= Math.min(hasta || ULTIMA_FANTASY, SEMANAS); w++) t += alineacion(ids, w).pts;
     return t;
   }
   // Las piezas extra valen menos: ocupan lugar en tu roster
@@ -465,7 +656,7 @@
     const f = [1, 0.8, 0.65];
     return sum(v.map((x, i) => x * (f[i] !== undefined ? f[i] : 0.5)));
   }
-  function evaluarTrade(doy, recibo, miRoster) {
+  function evaluarTrade(doy, recibo, miRoster, suRoster) {
     const vD = valorLado(doy), vR = valorLado(recibo);
     const dif = (vR - vD) / Math.max(1, Math.max(vD, vR));
     let veredicto, clase;
@@ -478,10 +669,148 @@
     if (miRoster && miRoster.length) {
       const despues = miRoster.filter((id) => !doy.includes(id)).concat(recibo);
       const antes = puntosRestoTemporada(miRoster), luego = puntosRestoTemporada(despues);
-      const semanas = Math.max(1, Math.min(17, SEMANAS) - semanaProy + 1);
+      const semanas = Math.max(1, Math.min(ULTIMA_FANTASY, SEMANAS) - semanaProy + 1);
       impacto = { antes, luego, dif: luego - antes, porSemana: (luego - antes) / semanas };
     }
-    return { vD, vR, dif, veredicto, clase, impacto };
+    // Lo mismo desde el lado del otro equipo: ¿le conviene a su alineación?
+    let impactoOtro = null;
+    if (suRoster && suRoster.length) {
+      const despues = suRoster.filter((id) => !recibo.includes(id)).concat(doy);
+      const antes = puntosRestoTemporada(suRoster), luego = puntosRestoTemporada(despues);
+      const semanas = Math.max(1, Math.min(ULTIMA_FANTASY, SEMANAS) - semanaProy + 1);
+      impactoOtro = { antes, luego, dif: luego - antes, porSemana: (luego - antes) / semanas };
+    }
+    // Probabilidad aproximada de que lo acepten: sube si a ellos les conviene en valor y en su alineación
+    let acepta = null;
+    if (impactoOtro) {
+      const z = -dif * 4 + impactoOtro.porSemana * 0.35;
+      acepta = clamp(1 / (1 + Math.exp(-z)), 0.03, 0.97);
+    }
+    // Un solo veredicto: si das jugadores de tu roster, manda lo que gana o pierde tu alineación.
+    // El "valor" solo queda como respaldo (cuando no hay roster) y para estimar si lo aceptarían.
+    let porPuntos = false;
+    if (impacto) {
+      porPuntos = true;
+      const s = impacto.porSemana;
+      if (s >= 1) { veredicto = `Te conviene: +${s.toFixed(1)} pts por semana`; clase = "favor"; }
+      else if (s >= 0.3) { veredicto = `Te conviene un poco: +${s.toFixed(1)} pts por semana`; clase = "favor"; }
+      else if (s > -0.3) { veredicto = "Casi no cambia tu equipo"; clase = "justo"; }
+      else if (s > -1) { veredicto = `No te conviene: ${s.toFixed(1)} pts por semana`; clase = "contra"; }
+      else { veredicto = `No te conviene: pierdes ${(-s).toFixed(1)} pts por semana`; clase = "contra"; }
+    }
+    return { vD, vR, dif, veredicto, clase, impacto, impactoOtro, acepta, porPuntos };
+  }
+
+  // ---------------- Defensa vs. posición ----------------
+  // Puntos de fantasy que permite cada defensa a QB/RB/WR/TE por partido, contra el promedio de la liga.
+  let dvpCache = null;
+  function dvp() {
+    if (dvpCache) return dvpCache;
+    const acum = {}; // equipo -> pos -> {pts, juegos:Set}
+    TEAMS.forEach((t) => (acum[t] = { QB: [0, new Set()], RB: [0, new Set()], WR: [0, new Set()], TE: [0, new Set()] }));
+    jugadores.forEach((j) => {
+      if (!["QB", "RB", "WR", "TE"].includes(j.pos)) return;
+      j.filas.forEach((r) => {
+        const def = r[1];
+        if (!acum[def]) return;
+        acum[def][j.pos][0] += puntos(filaObj(r), j.pos, true);
+        acum[def][j.pos][1].add(r[0]);
+      });
+    });
+    const out = {}, liga = {};
+    ["QB", "RB", "WR", "TE"].forEach((p) => {
+      const vals = TEAMS.map((t) => (acum[t][p][1].size ? acum[t][p][0] / acum[t][p][1].size : 0)).filter((x) => x > 0);
+      liga[p] = mean(vals);
+    });
+    TEAMS.forEach((t) => {
+      out[t] = {};
+      ["QB", "RB", "WR", "TE"].forEach((p) => {
+        const g = acum[t][p][1].size;
+        const ppg = g ? acum[t][p][0] / g : liga[p];
+        const ajust = (ppg * g + liga[p] * 2) / (g + 2); // pocas semanas: se jala al promedio
+        out[t][p] = { ppg, ratio: liga[p] ? ajust / liga[p] : 1 };
+      });
+    });
+    ["QB", "RB", "WR", "TE"].forEach((p) => {
+      TEAMS.slice().sort((a, b) => out[b][p].ratio - out[a][p].ratio).forEach((t, i) => (out[t][p].rank = i + 1)); // 1 = la que más permite
+    });
+    return (dvpCache = { equipos: out, liga });
+  }
+
+  // ---------------- ¿A quién alineo? ----------------
+  // Probabilidad de que cada jugador sea el que más puntos haga entre los elegidos (simulación).
+  function compararJugadores(ids, w, n) {
+    n = n || 4000;
+    const datos = ids.map((id) => {
+      const j = porId[id], pr = proyectarSemana(j, w), f = j.fila || {};
+      const sd = Math.max(1.5, (f.sd || 0.45 * pr.ptsSano)) * (pr.disp.f || 0);
+      return { id, mu: pr.pts, sd, pr };
+    });
+    const gana = ids.map(() => 0);
+    let seed = 12345;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    const normal = () => { const u = Math.max(1e-9, rnd()), v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+    for (let k = 0; k < n; k++) {
+      let mejor = -1, max = -1e9;
+      datos.forEach((d, i) => {
+        const x = d.pr.disp.f === 0 || d.pr.bye ? -1e6 + i : Math.max(0, d.mu + d.sd * normal());
+        if (x > max) { max = x; mejor = i; }
+      });
+      gana[mejor]++;
+    }
+    return datos.map((d, i) => Object.assign(d, { pMejor: gana[i] / n, piso: Math.max(0, d.mu - RANGO * d.sd), techo: d.mu + RANGO * d.sd }));
+  }
+
+  // ---------------- Simulación de la liga ----------------
+  // liga: { equipos:[{id, jugadores, w, l, t, pf}], calendario:[{p, h, a, ganador}], periodos:{p:[semanas]} }
+  function simularLiga(liga, n) {
+    n = n || 3000;
+    const eqs = liga.equipos;
+    const regular = cfg.temporadaRegular;
+    const lugares = Math.max(1, liga.lugaresPlayoff || 4);
+    const proyCache = {};
+    const proyEquipo = (e, p) => {
+      const k = e.id + "|" + p;
+      if (proyCache[k]) return proyCache[k];
+      const semanas = (liga.periodos && liga.periodos[p]) || [p];
+      let mu = 0, v = 0;
+      semanas.forEach((w) => {
+        if (w > SEMANAS) return;
+        const al = alineacion(e.jugadores, w);
+        mu += al.pts;
+        v += sum(al.titulares.filter((t) => t.id).map((t) => { const f = porId[t.id].fila; const d = t.pr && t.pr.disp ? t.pr.disp.f : 1; return ((f ? f.sd : 6) * d) ** 2; }));
+      });
+      return (proyCache[k] = { mu, sd: Math.sqrt(v + 1) });
+    };
+    const pend = liga.calendario.filter((m) => m.p <= regular && (!m.ganador || m.ganador === "UNDECIDED") && m.p >= (liga.periodoActual || 1));
+    const res = {};
+    eqs.forEach((e) => (res[e.id] = { playoffs: 0, primero: 0, ultimo: 0, victorias: 0 }));
+    let seed = 987654;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    const normal = () => { const u = Math.max(1e-9, rnd()), v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+    const porId2 = {};
+    eqs.forEach((e) => (porId2[e.id] = e));
+    for (let k = 0; k < n; k++) {
+      const tabla = {};
+      eqs.forEach((e) => (tabla[e.id] = { w: e.w || 0, pf: e.pf || 0 }));
+      pend.forEach((m) => {
+        const h = porId2[m.h], a = porId2[m.a];
+        if (!h || !a) return;
+        const ph = proyEquipo(h, m.p), pa = proyEquipo(a, m.p);
+        const xh = ph.mu + ph.sd * normal(), xa = pa.mu + pa.sd * normal();
+        tabla[m.h].pf += xh; tabla[m.a].pf += xa;
+        if (xh > xa) tabla[m.h].w++; else tabla[m.a].w++;
+      });
+      const orden = eqs.map((e) => e.id).sort((x, y) => tabla[y].w - tabla[x].w || tabla[y].pf - tabla[x].pf);
+      orden.forEach((id, i) => {
+        if (i < lugares) res[id].playoffs++;
+        res[id].victorias += tabla[id].w;
+      });
+      res[orden[0]].primero++;
+      res[orden[orden.length - 1]].ultimo++;
+    }
+    Object.values(res).forEach((r) => { r.playoffs /= n; r.primero /= n; r.ultimo /= n; r.victorias /= n; });
+    return res;
   }
 
   global.Modelo = {
@@ -489,5 +818,9 @@
     jugadores, porId, puntos, puntosK, puntosDST, filaObj, predecirPartido, proyectarSemana, proyectarPartido,
     puntosReales, recalcular, get tabla() { return tabla; }, get reemplazo() { return reemplazo; },
     valorLado, alineacion, evaluarTrade, puntosRestoTemporada, disponibilidad, tg, mean, sum, clamp, phi,
+    dvp, compararJugadores, simularLiga, efectoClima, ULTIMA_FANTASY, TASA_RZ,
+    ponerClima(id, c) { CLIMA[id] = c; },
+    PAR, PAR_BASE, RANGO, limpiarCache, bajasEquipo,
+    get clima() { return CLIMA; },
   };
 })(typeof window !== "undefined" ? window : globalThis);

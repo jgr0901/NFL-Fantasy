@@ -11,7 +11,7 @@
   const leerLocal = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
   const guardarLocal = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* sin almacenamiento */ } };
 
-  const VACIO = () => ({ roster: null, seguimiento: [], trades: [], ajustes: {}, editado: 0 });
+  const VACIO = () => ({ roster: null, seguimiento: [], trades: [], ajustes: {}, semanas: {}, editado: 0 });
   let estado = Object.assign(VACIO(), leerLocal(K_ESTADO) || {});
   // Compatibilidad con la versión anterior (solo roster)
   if (!estado.roster) { const r = leerLocal("nflf_roster"); if (Array.isArray(r) && r.length) estado.roster = r; }
@@ -205,6 +205,7 @@
     get modo() { return modo; },
     get usuario() { return usuario; },
     get hayCuentas() { return !!sb; },
+    get cliente() { return sb; },
     guardar, guardarEspn, borrarEspn, iniciar, entrar, entrarConGoogle, crearCuenta, salir,
     alCambiar: (f) => oyentes.push(f),
   };
