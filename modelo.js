@@ -30,6 +30,24 @@
     return z > 0 ? 1 - p : p;
   }
 
+  // ---------------- Parámetros del modelo ----------------
+  // Valores de partida. Cada día generar_historial.js prueba otras combinaciones contra lo que
+  // realmente pasó en las semanas jugadas y guarda en historial.js las que se equivocaron menos.
+  //   decay: cuánto pesa una semana contra la siguiente más reciente (más bajo = más peso a lo reciente)
+  //   tdReg: qué tanto se jalan los TDs hacia lo que sugieren sus yardas y su uso en zona roja
+  //   vegas: peso de la línea de las casas de apuestas en el marcador
+  //   sdPartido: qué tanto varía el resultado de un partido NFL (para la probabilidad de ganar)
+  //   espn: peso de la proyección de ESPN en la semana actual
+  //   companeros: qué parte del volumen de un jugador que no juega se reparte entre sus compañeros
+  //   sdEscala: corrige qué tanto varía cada jugador de semana a semana, para que el rango
+  //             "de semana mala a buena" de verdad cubra 8 de cada 10 semanas
+  const PAR_BASE = { decay: 0.88, tdReg: 0.4, vegas: 0.6, sdPartido: 13, espn: 0.5, companeros: 0.7, sdEscala: 1.4 };
+  const RANGO = 1.2816; // ± este número de desviaciones cubre el 80% de los casos
+  const HIST = global.NFL_HIST;
+  const PAR = Object.assign({}, PAR_BASE,
+    !D.modoHistorial && HIST && HIST.temporada === D.temporada && HIST.ajuste ? HIST.ajuste.par || {} : {},
+    D.parametros || {});
+
   // ---------------- Configuración de la liga ----------------
   // Por defecto la liga "borregos fantasy" (ESPN, PPR, 10 equipos). Si conectas tu liga de ESPN,
   // se reemplaza con su configuración real (puntaje, puestos, equipos y semanas de playoffs).
@@ -161,8 +179,8 @@
     const modelo = { home: H.pts, away: A.pts };
     const vegas = g.spread !== null && g.total !== null;
     if (vegas) { // mezcla con la línea de las casas de apuestas
-      H.pts = 0.6 * (g.total / 2 + g.spread / 2) + 0.4 * H.pts;
-      A.pts = 0.6 * (g.total / 2 - g.spread / 2) + 0.4 * A.pts;
+      H.pts = PAR.vegas * (g.total / 2 + g.spread / 2) + (1 - PAR.vegas) * H.pts;
+      A.pts = PAR.vegas * (g.total / 2 - g.spread / 2) + (1 - PAR.vegas) * A.pts;
     }
     [H, A].forEach((x) => {
       x.pts = Math.max(6, x.pts);
@@ -171,7 +189,7 @@
       const r = Math.max(0.05, x.ptd) / (Math.max(0.05, x.ptd) + Math.max(0.05, x.rtd));
       x.ptd = td * r; x.rtd = td * (1 - r);
     });
-    const pHome = phi((H.pts - A.pts) / 13);
+    const pHome = phi((H.pts - A.pts) / PAR.sdPartido);
     return (cachePred[g.id] = { home: H, away: A, pHome, modelo, vegas });
   }
   const base = {};
@@ -302,7 +320,7 @@
 
   // ---------------- Proyección base de cada jugador ----------------
   const ULT = D.ultimaSemana;
-  const pesoSemana = (w) => Math.pow(0.88, ULT - w);
+  const pesoSemana = (w) => Math.pow(PAR.decay, ULT - w);
   const jugadores = D.jugadores.map((p) => {
     const ultimaAp = p.w.length ? p.w[p.w.length - 1][0] : 0;
     const perdidos = Object.keys(tg[p.t] || {}).filter((w) => +w > ultimaAp).length;
@@ -335,14 +353,16 @@
     });
     // Regresión de TDs hacia lo esperado por yardas y por uso en zona roja
     const U = j.uso;
+    const r = PAR.tdReg;
     if (U && TASA_RZ.car && G >= 2) {
-      b.rtd = 0.5 * b.rtd + 0.25 * b.ryd * TASA.rtd + 0.25 * U.rzCar * TASA_RZ.car;
-      b.rectd = 0.5 * b.rectd + 0.25 * b.recyd * TASA.rectd + 0.25 * U.rzTgt * TASA_RZ.tgt;
+      const rz = Math.min(0.9, r + 0.1); // con datos de zona roja se confía un poco más en lo esperado
+      b.rtd = (1 - rz) * b.rtd + (rz / 2) * b.ryd * TASA.rtd + (rz / 2) * U.rzCar * TASA_RZ.car;
+      b.rectd = (1 - rz) * b.rectd + (rz / 2) * b.recyd * TASA.rectd + (rz / 2) * U.rzTgt * TASA_RZ.tgt;
     } else {
-      b.rtd = 0.6 * b.rtd + 0.4 * b.ryd * TASA.rtd;
-      b.rectd = 0.6 * b.rectd + 0.4 * b.recyd * TASA.rectd;
+      b.rtd = (1 - r) * b.rtd + r * b.ryd * TASA.rtd;
+      b.rectd = (1 - r) * b.rectd + r * b.recyd * TASA.rectd;
     }
-    b.ptd = 0.6 * b.ptd + 0.4 * b.pyd * TASA.ptd;
+    b.ptd = (1 - r) * b.ptd + r * b.pyd * TASA.ptd;
     // Cambio de rol: si en sus últimos 2 partidos jugó muchos más (o menos) snaps que antes,
     // su volumen se ajusta en esa dirección (como hacen FantasyPros y PlayerProfiler con el uso).
     if (U && p.p !== "QB" && U.filas.length >= 3 && U.snap > 0.05) {
@@ -363,6 +383,11 @@
   });
   const porId = {};
   jugadores.forEach((j) => (porId[j.id] = j));
+  const ofensivosDe = {}; // equipo -> jugadores ofensivos (para repartir el volumen de las bajas)
+  jugadores.forEach((j) => {
+    if (!j.base || !["QB", "RB", "WR", "TE"].includes(j.pos) || j.estado === "CUT" || j.estado === "RET") return;
+    (ofensivosDe[j.t] = ofensivosDe[j.t] || []).push(j);
+  });
 
   // Probabilidad de que juegue en una semana. ESPN es la fuente principal del estado.
   const ESPN_INJ = {
@@ -402,30 +427,102 @@
     return { f: 1, nota: "" };
   }
 
+  // ---------------- Bajas de compañeros ----------------
+  // Si un jugador no va a jugar, sus targets y acarreos se reparten entre sus compañeros según lo que
+  // ya reciben (un poco más a los de su misma posición). Si falta el QB titular, el suplente hereda su
+  // volumen de pase con menos eficiencia y sus receptores bajan un poco.
+  // Solo cuentan las bajas de jugadores que venían jugando: si ya lleva 2+ partidos fuera, sus
+  // compañeros ya reflejan ese volumen en sus promedios.
+  const cacheEq = new Map();
+  function bajasEquipo(t, w) {
+    const k = t + "|" + w;
+    if (cacheEq.has(k)) return cacheEq.get(k);
+    const out = { tgt: {}, car: {}, sustituto: null, qb: null, eficPase: 1, notas: {} };
+    cacheEq.set(k, out);
+    const js = ofensivosDe[t] || [];
+    if (!PAR.companeros || !js.length) return out;
+    const est = js.map((j) => ({ j, f: disponibilidad(j, w).f, peso: j.perdidos === 0 ? 1 : j.perdidos === 1 ? 0.5 : 0 }));
+    [["tgt", ["WR", "TE", "RB"], "targets"], ["car", ["RB"], "acarreos"]].forEach(([key, posOk, txt]) => {
+      let vac = 0;
+      const quien = [], posFalta = new Set();
+      est.forEach((e) => {
+        if (e.j.pos === "QB") return; // lo del QB lo hereda su suplente (abajo)
+        const v = (1 - e.f) * e.peso * (e.j.base[key] || 0);
+        if (v >= 0.7) { vac += v; quien.push(e.j.n); posFalta.add(e.j.pos); }
+      });
+      if (vac < 0.7) return;
+      const elig = est.filter((e) => e.f > 0 && posOk.includes(e.j.pos) && (e.j.base[key] || 0) >= 0.3 && !quien.includes(e.j.n));
+      const peso = (e) => e.j.base[key] * (posFalta.has(e.j.pos) ? 1.6 : 1);
+      const nombres = quien.length > 2 ? quien.slice(0, 2).join(", ") + ` y ${quien.length - 2} más` : quien.join(" y ");
+      const tot = sum(elig.map(peso));
+      if (!tot) return;
+      elig.forEach((e) => {
+        const extra = (PAR.companeros * vac * peso(e)) / tot;
+        const f = clamp(1 + extra / e.j.base[key], 1, 1.6);
+        if (f < 1.03) return;
+        out[key][e.j.id] = f;
+        const nota = `+${Math.round((f - 1) * 100)}% ${txt} por la baja de ${nombres}`;
+        out.notas[e.j.id] = out.notas[e.j.id] ? out.notas[e.j.id] + " · " + nota : nota;
+      });
+    });
+    // QB titular fuera
+    const qbs = est.filter((e) => e.j.pos === "QB").sort((a, b) => b.j.base.att - a.j.base.att);
+    const q1 = qbs[0];
+    if (q1 && q1.peso > 0 && q1.f < 0.6 && q1.j.base.att >= 15) {
+      const falta = (1 - q1.f) * q1.peso;
+      out.eficPase = 1 - 0.12 * falta;
+      const q2 = qbs.slice(1).find((e) => e.f > 0);
+      if (q2) {
+        out.sustituto = q2.j.id; out.qb = q1.j; out.faltaQB = falta;
+        out.notas[q2.j.id] = `Sería titular por la baja de ${q1.j.n}`;
+      }
+      js.forEach((j) => {
+        if (j.pos !== "WR" && j.pos !== "TE") return;
+        const n = `${q1.j.n} (QB) no juega: menos yardas y TDs por pase`;
+        out.notas[j.id] = out.notas[j.id] ? out.notas[j.id] + " · " + n : n;
+      });
+    }
+    return out;
+  }
+
   // Proyección de un jugador en un partido concreto
   function proyectarPartido(j, g) {
     const rival = g.home === j.t ? g.away : "@" + g.home;
     const disp = disponibilidad(j, g.w);
-    let pts, s = null;
+    let pts, s = null, companeros = "";
     const a = ambiente(j.t, g);
     if (j.pos === "DST") { const r = proyectarDST(j.t, g); pts = r.pts; s = r.s; }
     else if (j.pos === "K") { pts = j.baseK * clamp(Math.pow(a.td, 0.6), 0.75, 1.3) * a.k; }
     else {
-      const b = j.base; s = {};
+      const bq = bajasEquipo(j.t, g.w);
+      let b = j.base;
+      s = {};
+      if (bq.sustituto === j.id) { // el suplente hereda el volumen de pase del titular
+        b = Object.assign({}, j.base);
+        const q = bq.qb.base, m = bq.faltaQB;
+        [["att", 1], ["cmp", 0.95], ["pyd", 0.85], ["ptd", 0.8], ["int", 1.1], ["sk", 1.1]].forEach(([k, ef]) => {
+          b[k] = Math.max(j.base[k], m * q[k] * ef + (1 - m) * j.base[k]);
+        });
+        b.car = Math.max(j.base.car, m * q.car * 0.7); b.ryd = Math.max(j.base.ryd, m * q.ryd * 0.6);
+      }
+      const fT = bq.tgt[j.id] || 1, fC = bq.car[j.id] || 1, ef = j.pos === "QB" ? 1 : bq.eficPase;
       s.att = b.att * a.pase; s.cmp = b.cmp * a.pase; s.pyd = b.pyd * a.pase;
       s.ptd = b.ptd * a.td; s.int = b.int; s.sk = b.sk;
-      s.car = b.car * a.carrera; s.ryd = b.ryd * a.carrera; s.rtd = b.rtd * a.td;
-      s.tgt = b.tgt * a.pase; s.rec = b.rec * a.pase; s.recyd = b.recyd * a.pase; s.rectd = b.rectd * a.td;
+      s.car = b.car * a.carrera * fC; s.ryd = b.ryd * a.carrera * fC; s.rtd = b.rtd * a.td * fC;
+      s.tgt = b.tgt * a.pase * fT; s.rec = b.rec * a.pase * fT * (0.5 + 0.5 * ef);
+      s.recyd = b.recyd * a.pase * fT * ef; s.rectd = b.rectd * a.td * fT * ef;
+      companeros = bq.notas[j.id] || "";
       s.fl = b.fl; s.fum = b.fum; s.tp = b.tp; s.ts = b.ts; s.ay = b.ay; s.ret = b.ret;
       pts = puntos(s, j.pos, false);
     }
     // Mezcla con la proyección de ESPN para la semana actual, si existe
     let espn = null;
+    const ptsModelo = pts;
     if (j.espn && j.espn.ps !== null && j.espn.ps !== undefined && g.w === semanaProy) {
       espn = j.espn.ps;
-      if (espn > 0) pts = 0.5 * pts + 0.5 * espn;
+      if (espn > 0) pts = (1 - PAR.espn) * pts + PAR.espn * espn;
     }
-    return { g, s, pts: pts * disp.f, ptsSano: pts, disp, rival, amb: a, espn };
+    return { g, s, pts: pts * disp.f, ptsSano: pts, ptsModelo: ptsModelo * disp.f, disp, rival, amb: a, espn, companeros };
   }
   const cacheSem = new Map();
   function proyectarSemana(j, w) {
@@ -446,14 +543,19 @@
     return j.filas.map((r) => { const s = filaObj(r); return { w: r[0], rival: r[1], pts: puntos(s, j.pos, true), s }; });
   }
 
+  function limpiarCache() {
+    Object.keys(cachePred).forEach((k) => delete cachePred[k]);
+    cacheSem.clear();
+    cacheEq.clear();
+  }
+
   // ---------------- Cálculo global ----------------
   let tabla = [];
   let reemplazo = {};
   const SEM_PLAYOFF = cfg.playoffs;
   const POS = ["QB", "RB", "WR", "TE", "K", "DST"];
   function recalcular() {
-    Object.keys(cachePred).forEach((k) => delete cachePred[k]);
-    cacheSem.clear();
+    limpiarCache();
     tabla = jugadores.map((j) => {
       const reales = puntosReales(j);
       const ppg = reales.length ? mean(reales.map((x) => x.pts)) : 0;
@@ -474,7 +576,7 @@
       const pts = reales.map((x) => x.pts);
       const ref = sem.ptsSano || sano;
       const sdObs = pts.length >= 3 ? Math.sqrt(mean(pts.map((x) => (x - ppg) ** 2))) : 0;
-      const sd = pts.length >= 3 ? 0.5 * sdObs + 0.5 * 0.45 * ref : 0.45 * ref;
+      const sd = (pts.length >= 3 ? 0.5 * sdObs + 0.5 * 0.45 * ref : 0.45 * ref) * PAR.sdEscala;
       let tdReal = 0, tdEsp = 0;
       if (j.base) {
         reales.forEach((x) => {
@@ -642,7 +744,7 @@
       });
       gana[mejor]++;
     }
-    return datos.map((d, i) => Object.assign(d, { pMejor: gana[i] / n, piso: Math.max(0, d.mu - 0.85 * d.sd), techo: d.mu + 0.85 * d.sd }));
+    return datos.map((d, i) => Object.assign(d, { pMejor: gana[i] / n, piso: Math.max(0, d.mu - RANGO * d.sd), techo: d.mu + RANGO * d.sd }));
   }
 
   // ---------------- Simulación de la liga ----------------
@@ -704,6 +806,7 @@
     valorLado, alineacion, evaluarTrade, puntosRestoTemporada, disponibilidad, tg, mean, sum, clamp, phi,
     dvp, compararJugadores, simularLiga, efectoClima, ULTIMA_FANTASY, TASA_RZ,
     ponerClima(id, c) { CLIMA[id] = c; },
+    PAR, PAR_BASE, RANGO, limpiarCache, bajasEquipo,
     get clima() { return CLIMA; },
   };
 })(typeof window !== "undefined" ? window : globalThis);

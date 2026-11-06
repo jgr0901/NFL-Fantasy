@@ -10,6 +10,7 @@
   // ---------------- Utilidades ----------------
   const $ = (s, el) => (el || document).querySelector(s);
   const f1 = (x) => (x === null || x === undefined || isNaN(x) ? "–" : (Math.round(x * 10) / 10).toFixed(1));
+  const f2 = (x) => (x === null || x === undefined || isNaN(x) ? "–" : (Math.round(x * 100) / 100).toFixed(2));
   const f0 = (x) => (x === null || x === undefined || isNaN(x) ? "–" : Math.round(x).toString());
   const pct = (x) => (x === null || x === undefined || isNaN(x) ? "–" : Math.round(x * 100) + "%");
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -80,9 +81,16 @@
     if (!pr || !pr.disp) return "";
     if (pr.bye) return `<span class="tag gris">BYE</span>`;
     const d = pr.disp;
-    if (!d.nota) return "";
-    const c = d.f === 0 ? "rojo" : d.f < 1 ? "amar" : "gris";
-    return `<span class="tag ${c}">${esc(d.nota)}</span>`;
+    let html = "";
+    if (d.nota) html = `<span class="tag ${d.f === 0 ? "rojo" : d.f < 1 ? "amar" : "gris"}">${esc(d.nota)}</span>`;
+    if (d.f > 0 && pr.companeros) html += ` ${companerosTag(pr.companeros)}`;
+    return html;
+  }
+  // Efecto de las bajas de sus compañeros (más volumen, o menos si falta su QB)
+  function companerosTag(nota) {
+    const sube = /^\+|Sería titular/.test(nota), baja = /no juega/.test(nota);
+    const txt = /Sería titular/.test(nota) ? "⭐ Sería titular" : sube && baja ? "↕ Bajas en su equipo" : sube ? "↑ Más balones por bajas" : "↓ Sin su QB titular";
+    return `<span class="tag ${sube && !baja ? "verde" : baja && !sube ? "amar" : "azul"}" title="${esc(nota)}">${txt}</span>`;
   }
   function linea(s, pos) { // línea de estadísticas proyectadas
     if (!s) return "";
@@ -443,8 +451,8 @@
       const a = M.alineacion(roster, w), sd = Math.sqrt(varianza(a));
       totalResto += a.pts;
       const byes = roster.filter((id) => M.byes[M.porId[id].t] === w && M.porId[id].pos !== "DST").length;
-      resto.push({ x: "S" + w, y: a.pts, lo: Math.max(0, a.pts - 0.85 * sd), hi: a.pts + 0.85 * sd, tipo: "proy", playoff: PLAYOFFS.includes(w),
-        nota: byes ? byes + " bye" : "", titulo: `Semana ${w}: ${f1(a.pts)} pts (${f0(a.pts - 0.85 * sd)}–${f0(a.pts + 0.85 * sd)})${byes ? ` · ${byes} en bye` : ""}` });
+      resto.push({ x: "S" + w, y: a.pts, lo: Math.max(0, a.pts - M.RANGO * sd), hi: a.pts + M.RANGO * sd, tipo: "proy", playoff: PLAYOFFS.includes(w),
+        nota: byes ? byes + " bye" : "", titulo: `Semana ${w}: ${f1(a.pts)} pts (${f0(a.pts - M.RANGO * sd)}–${f0(a.pts + M.RANGO * sd)})${byes ? ` · ${byes} en bye` : ""}` });
     }
     // Alertas
     const alertas = [];
@@ -459,8 +467,8 @@
     const sim = simulacion();
     const rank = rankingRosters();
     const miRank = rank && ligaMia ? rank.find((f) => f.e.mio) : null;
-    const piso = (x) => Math.max(0, x.pr.pts - 0.85 * M.porId[x.id].fila.sd * (x.pr.disp.f || 0));
-    const techo = (x) => x.pr.pts + 0.85 * M.porId[x.id].fila.sd * (x.pr.disp.f || 0);
+    const piso = (x) => Math.max(0, x.pr.pts - M.RANGO * M.porId[x.id].fila.sd * (x.pr.disp.f || 0));
+    const techo = (x) => x.pr.pts + M.RANGO * M.porId[x.id].fila.sd * (x.pr.disp.f || 0);
     // Proyección de un titular promedio por posición (para la barrita de cada jugador)
     const refPos = {};
     ["QB", "RB", "WR", "TE", "K", "DST"].forEach((p) => {
@@ -521,7 +529,7 @@
     } else {
       hero = `<div class="hero">
         <div class="fila entre"><div class="hero-t">Semana ${semEquipo}${PLAYOFFS.includes(semEquipo) ? " · playoffs" : ""}</div>${selRival}</div>
-        <div class="vs"><div class="lado gana"><div class="nom">Tu alineación</div><div class="pts">${f1(al.pts)}</div><div class="pr">${f0(al.pts - 0.85 * sdMia)}–${f0(al.pts + 0.85 * sdMia)} pts</div></div></div>
+        <div class="vs"><div class="lado gana"><div class="nom">Tu alineación</div><div class="pts">${f1(al.pts)}</div><div class="pr">${f0(al.pts - M.RANGO * sdMia)}–${f0(al.pts + M.RANGO * sdMia)} pts</div></div></div>
         <div class="hero-n">${ligaMia ? "Elige a tu rival para ver tu probabilidad de ganar." : `Conecta tu liga en <a href="#" data-ir="liga">Liga</a> para ver tu probabilidad de ganar cada semana y de llegar a playoffs.`}</div></div>`;
     }
 
@@ -736,40 +744,78 @@
   function vistaPrecision() {
     if (!H || !H.proy) return `<div class="vacio bloque">Todavía no hay historial de proyecciones. Se genera con la actualización automática diaria.</div>`;
     const semanas = Object.keys(H.proy).map(Number).filter((w) => w <= D.ultimaSemana).sort((a, b) => a - b);
+    const cal = {}; // calibración de la probabilidad de ganar: grupo -> [juegos, prob. sumada, ganó el favorito]
+    let dentro = 0, totRango = 0;
     const filas = semanas.map((w) => {
       // Jugadores: error promedio contra los puntos reales (solo los relevantes, proyección de 5+)
       let e = 0, n = 0, eE = 0, nE = 0, eV = 0, nV = 0;
-      const espn = (H.espn || {})[w] || {}, vivoW = (H.vivo || {})[w] || {};
+      const espn = (H.espn || {})[w] || {}, vivoW = (H.vivo || {})[w] || {}, rango = (H.rango || {})[w] || {};
       M.tabla.forEach((x) => {
         const real = x.reales.find((r) => r.w === w);
         const pr = H.proy[w][x.j.id];
         if (!real || pr === undefined || pr < 5) return;
         e += Math.abs(pr - real.pts); n++;
+        if (rango[x.j.id]) { totRango++; if (Math.abs(real.pts - pr) <= M.RANGO * rango[x.j.id]) dentro++; }
         if (espn[x.j.id] !== undefined) { eE += Math.abs(espn[x.j.id] - real.pts); nE++; }
         if (vivoW[x.j.id] !== undefined) { eV += Math.abs(vivoW[x.j.id] - real.pts); nV++; }
       });
       // Partidos: ganador acertado y error del marcador
       const js = M.partidos.filter((g) => g.w === w && g.jugado), hj = (H.juegos || {})[w] || {};
       let ok = 0, tot = 0, eM = 0;
-      js.forEach((g) => { const p = hj[g.id]; if (!p) return; tot++; if ((p[0] >= 0.5) === (g.hs > g.as)) ok++; eM += Math.abs(p[1] - g.as) + Math.abs(p[2] - g.hs); });
+      js.forEach((g) => {
+        const p = hj[g.id]; if (!p) return;
+        tot++; const acierto = (p[0] >= 0.5) === (g.hs > g.as); if (acierto) ok++;
+        eM += Math.abs(p[1] - g.as) + Math.abs(p[2] - g.hs);
+        if (g.hs === g.as) return;
+        const fav = Math.max(p[0], 1 - p[0]);
+        const k = fav < 0.6 ? 0 : fav < 0.7 ? 1 : fav < 0.8 ? 2 : 3;
+        cal[k] = cal[k] || [0, 0, 0]; cal[k][0]++; cal[k][1] += fav; if (acierto) cal[k][2]++;
+      });
       return { w, mae: n ? e / n : null, n, maeE: nE ? eE / nE : null, maeV: nV ? eV / nV : null, ok, tot, eM: tot ? eM / (2 * tot) : null };
     });
     const tOk = M.sum(filas.map((f) => f.ok)), tTot = M.sum(filas.map((f) => f.tot));
     const conN = filas.filter((f) => f.mae !== null);
     const maeT = conN.length ? M.sum(conN.map((f) => f.mae * f.n)) / M.sum(conN.map((f) => f.n)) : null;
     const conE = filas.filter((f) => f.maeE !== null);
+    // Calibración: ¿cuando dice 70%, gana 7 de cada 10?
+    const grupos = ["50–60%", "60–70%", "70–80%", "80% o más"];
+    const filasCal = grupos.map((g, k) => {
+      const c = cal[k]; if (!c || !c[0]) return "";
+      const dice = c[1] / c[0], paso = c[2] / c[0];
+      const ok = Math.abs(paso - dice) <= Math.max(0.08, 1.2 * Math.sqrt(dice * (1 - dice) / c[0]));
+      return `<tr><td>${g}</td><td class="n">${c[0]}</td><td class="n">${pct(dice)}</td><td class="n fuerte">${pct(paso)}</td><td>${ok ? `<span class="tag verde">Confiable</span>` : paso > dice ? `<span class="tag azul">Se queda corto</span>` : `<span class="tag amar">Exagera</span>`}</td></tr>`;
+    }).join("");
+    const cobertura = totRango ? dentro / totRango : null;
+    // Ajuste automático de los parámetros
+    const A = H.ajuste || null, P0 = M.PAR_BASE, P = M.PAR;
+    const nombresPar = { decay: "Peso de las semanas recientes", tdReg: "Regresión de TDs", vegas: "Peso de las casas de apuestas", sdPartido: "Variación de un partido", espn: "Peso de la proyección de ESPN", sdEscala: "Ancho del rango de cada jugador" };
+    const cambios = A ? Object.keys(A.par || {}).filter((k) => nombresPar[k] && A.par[k] !== P0[k]) : [];
+    const pr = (A && A.pruebas) || {};
+    const mejora = (x, inv) => x && x.antes && x.despues !== undefined ? (inv ? `${pct(x.antes)} → <b>${pct(x.despues)}</b>` : `${f2(x.antes)} → <b>${f2(x.despues)}</b>`) : "–";
+    const ajusteHTML = !A ? "" : `<div class="panel bloque">${titulo("🔧 Ajuste automático", "Cada día, después de bajar las estadísticas, se vuelve a correr el modelo semana por semana con otras combinaciones de sus parámetros y se compara contra lo que de verdad pasó. Si una combinación se equivoca menos (al menos 1% menos), la página la usa desde ese momento. Con pocas semanas jugadas casi no cambia nada, para no perseguir la suerte.")}
+      <p>${A.semanas < 3 ? esc(A.nota || "Todavía hay pocas semanas para ajustar.") : cambios.length ? `Con ${A.semanas} semanas probadas, el modelo cambió: ${cambios.map((k) => `<b>${nombresPar[k]}</b> ${f2(P0[k])} → ${f2(A.par[k])}`).join(" · ")}.` : `Con ${A.semanas} semanas probadas, los valores actuales ya son los que menos se equivocan.`}</p>
+      <table class="mini"><tbody>
+        <tr><td>Error por jugador (pts)</td><td class="n">${mejora(pr.jugadores)}</td></tr>
+        <tr><td>Probabilidad de ganar (pérdida log., más bajo es mejor)</td><td class="n">${mejora(pr.partidos)}</td></tr>
+        <tr><td>Semanas que caen dentro del rango (meta: 80%)</td><td class="n">${mejora(pr.rango, true)}</td></tr>
+        ${pr.espn ? `<tr><td>Error mezclando con ESPN (pts)</td><td class="n">${mejora(pr.espn)}</td></tr>` : ""}
+      </tbody></table>
+      <p class="nota">Valores en uso: semanas recientes ${f2(P.decay)} · TDs ${f2(P.tdReg)} · casas de apuestas ${pct(P.vegas)} · ESPN ${pct(P.espn)} · ancho del rango ×${f2(P.sdEscala)}.</p></div>`;
     return `<div class="bloque"><h2>Qué tan bien predice</h2>
       <p class="nota">Compara lo que el modelo proyectaba <b>antes</b> de cada semana contra lo que pasó. ${ayuda("Error promedio = cuántos puntos se equivocó en promedio por jugador (solo jugadores con proyección de 5 o más). Entre más bajo, mejor. Las proyecciones de ESPN se guardan desde que la actualización automática empezó a registrarlas.")}</p></div>
       <div class="kpis">
         <div class="kpi"><div class="v">${tTot ? pct(tOk / tTot) : "–"}</div><div class="l">Ganadores acertados (${tOk} de ${tTot})</div></div>
         <div class="kpi"><div class="v">${f1(maeT)}</div><div class="l">Error promedio por jugador (pts)</div></div>
+        <div class="kpi"><div class="v">${cobertura === null ? "–" : pct(cobertura)}</div><div class="l">Semanas dentro del rango (meta 80%) ${ayuda("El rango de cada jugador (de semana mala a buena) debería atrapar sus puntos reales 8 de cada 10 semanas. Si el número es mucho menor, el modelo se confía de más; si es mucho mayor, el rango es demasiado ancho.")}</div></div>
         <div class="kpi"><div class="v">${conE.length ? f1(M.mean(conE.map((f) => f.maeE))) : "–"}</div><div class="l">Error promedio de ESPN (pts)</div></div>
-        <div class="kpi"><div class="v">${f1(M.mean(filas.filter((f) => f.eM !== null).map((f) => f.eM)))}</div><div class="l">Error en el marcador por equipo (pts)</div></div>
       </div>
+      ${filasCal ? `<div class="panel bloque">${titulo("¿Sus porcentajes son confiables?", "Se juntan los partidos según qué tan seguro estaba el modelo del favorito. Si es confiable, cuando dice 70% el favorito gana cerca de 7 de cada 10. 'Exagera' = se confía de más; 'Se queda corto' = el favorito gana más de lo que dice. Con pocos partidos en un grupo, las diferencias pequeñas son suerte.")}
+        <div class="tabla-scroll"><table class="mini"><thead><tr><th>El modelo decía</th><th class="n">Partidos</th><th class="n">Promedio</th><th class="n">Ganó el favorito</th><th></th></tr></thead><tbody>${filasCal}</tbody></table></div></div>` : ""}
+      ${ajusteHTML}
       <div class="panel"><div class="tabla-scroll"><table class="mini"><thead><tr><th>Semana</th><th class="n">Ganadores</th><th class="n">Error marcador</th><th class="n">Error por jugador</th><th class="n">Con lesiones al día</th><th class="n">ESPN</th><th class="n">Jugadores</th></tr></thead><tbody>
       ${filas.slice().reverse().map((f) => `<tr><td>${f.w}</td><td class="n">${f.tot ? f.ok + "/" + f.tot : "–"}</td><td class="n">${f1(f.eM)}</td><td class="n fuerte">${f1(f.mae)}</td><td class="n">${f1(f.maeV)}</td><td class="n">${f1(f.maeE)}</td><td class="n">${f.n}</td></tr>`).join("")}
       </tbody></table></div>
-      <p class="nota">"Error por jugador" en semanas pasadas se recalcula con los datos que había antes de esa semana (sin saber de lesiones). "Con lesiones al día" y "ESPN" son las proyecciones guardadas justo antes de los partidos; empiezan a llenarse desde esta semana.</p></div>`;
+      <p class="nota">"Error por jugador" en semanas pasadas se recalcula con los datos que había antes de esa semana (sin saber de lesiones). "Con lesiones al día" y "ESPN" son las proyecciones guardadas justo antes de los partidos.</p></div>`;
   }
 
   // ================= JUGADORES =================
@@ -888,7 +934,8 @@
       <div class="fila det-cab">${avatar(j, true)}<div><h2>${esc(j.n)}</h2>
         <div class="nota"><span class="pos ${j.pos}">${nombrePos(j.pos)}</span> ${logo(j.t, "chico")}${esc(M.EQUIPOS[j.t] || j.t)} · descansa la semana ${M.byes[j.t] || "–"}
         ${j.espn ? ` · en el ${j.espn.own}% de las ligas de ESPN` : ""}${duenoDe[id] ? " · equipo: " + esc(duenoDe[id].nombre) : ""}</div>
-        <div style="margin-top:6px">${estadoTag(x.sem)} ${tdNota} ${rol}</div></div></div>
+        <div style="margin-top:6px">${estadoTag(x.sem)} ${tdNota} ${rol}</div>
+        ${x.sem.companeros && x.sem.disp.f > 0 ? `<p class="nota" style="margin:6px 0 0">Semana ${SEM}: ${esc(x.sem.companeros)}.</p>` : ""}</div></div>
       <div class="kpis">
         <div class="kpi"><div class="v">${f1(x.ppg)}</div><div class="l">Pts por partido (${j.gp} PJ)</div></div>
         <div class="kpi"><div class="v">${x.sem.bye ? "BYE" : f1(x.sem.pts)}</div><div class="l">Proyección semana ${SEM}${x.sem.espn ? " (ESPN: " + f1(x.sem.espn) + ")" : ""}</div></div>
