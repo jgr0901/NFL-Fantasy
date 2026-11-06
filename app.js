@@ -628,6 +628,7 @@
   // ================= TUS DECISIONES =================
   // Cada semana se guarda (en tu cuenta) tu roster, tus titulares de ESPN y la alineación recomendada.
   // Cuando la semana se juega, se compara contra los puntos reales.
+  let ultimaFoto = 0;
   function guardarFotoSemana() {
     if (SEM > ULTIMA || SEM <= D.ultimaSemana) return;
     const al = M.alineacion(roster, SEM);
@@ -635,7 +636,12 @@
     const foto = { roster: roster.slice().sort(), rec: al.titulares.filter((x) => x.id).map((x) => x.id).sort(), tit: tit ? tit.slice().sort() : null };
     const S = SY.estado.semanas || (SY.estado.semanas = {});
     const ant = S[SEM];
-    if (ant && JSON.stringify({ roster: ant.roster, rec: ant.rec, tit: ant.tit }) === JSON.stringify(foto)) return;
+    // Solo se guarda si cambió tu roster o tus titulares (no cada vez que se mueve una proyección),
+    // y como mucho una vez por minuto: así dos pestañas o dispositivos abiertos no se pelean.
+    const clave = (f) => JSON.stringify({ roster: f.roster, tit: f.tit });
+    if (ant && clave(ant) === clave(foto)) return;
+    if (Date.now() - ultimaFoto < 60000) return;
+    ultimaFoto = Date.now();
     S[SEM] = Object.assign(foto, { fecha: new Date().toISOString().slice(0, 16) });
     SY.guardar();
   }
@@ -1695,7 +1701,7 @@
         else notas.push("Estadísticas: ya tienes las más nuevas (se bajan solas martes y sábados; para bajarlas al momento activa la llave de GitHub en Liga y datos).");
       }
       if (recargar) {
-        try { await fetch("data.js", { cache: "reload" }); } catch (e) { /* recarga normal */ }
+        try { await Promise.all(["data.js", "historial.js"].map((f) => fetch(f, { cache: "reload" }))); } catch (e) { /* recarga normal */ }
         decir(notas.join("<br>") + "<br>Recargando…");
         await esperar(notas.some((n) => n.startsWith("⚠️")) ? 4000 : 1200);
         location.reload();
