@@ -158,17 +158,13 @@
   let roster = [], origenRoster = "";
   function cargarRoster() {
     const r = SY.estado.roster;
-    if (r && r.length) { roster = r.filter((id) => M.porId[id]); origenRoster = ligaMia ? "tu liga de ESPN, con tus cambios" : "tus cambios"; }
-    else if (ligaMia) { roster = ligaMia.jugadores.filter((id) => M.porId[id]); origenRoster = "tu liga de ESPN"; }
+    // Con la liga de ESPN conectada, el roster siempre es el de ESPN (se pone al día con ⟳ Actualizar)
+    if (ligaMia) { roster = ligaMia.jugadores.filter((id) => M.porId[id]); origenRoster = "tu liga de ESPN"; }
+    else if (r && r.length) { roster = r.filter((id) => M.porId[id]); origenRoster = "tu lista"; }
     else { roster = []; origenRoster = "tu lista (vacía por ahora)"; }
   }
   cargarRoster();
-  function rosterAAvisos() {
-    if (!window.Avisos) return;
-    const js = roster.map((id) => M.porId[id]).filter((j) => j && j.eid).map((j) => ({ eid: j.eid, n: j.n, inj: j.espn && j.espn.inj }));
-    window.Avisos.mandarRoster(D.temporada, js).catch(() => {});
-  }
-  const guardarRoster = () => { SY.estado.roster = roster.slice(); SY.guardar(); invalidar(); rosterAAvisos(); };
+  const guardarRoster = () => { SY.estado.roster = roster.slice(); SY.guardar(); invalidar(); };
   const seguido = (id) => SY.estado.seguimiento.some((x) => x.id === id);
   const enRoster = (id) => roster.includes(id);
 
@@ -488,7 +484,7 @@
         <td class="n ocultar-movil">${pr.espn !== null && pr.espn !== undefined ? f1(pr.espn) : "–"}</td>
         <td class="n ocultar-movil">${pr.bye || !pr.pts ? "–" : f0(piso(x)) + "–" + f0(techo(x))}</td>
         <td class="ocultar-movil">${estadoTag(pr)}</td>
-        <td><button class="x" data-quitar="${j.id}" title="Quitar de mi equipo">×</button></td></tr>`;
+        <td>${ligaMia ? "" : `<button class="x" data-quitar="${j.id}" title="Quitar de mi equipo">×</button>`}</td></tr>`;
     };
     // Fuerza por posición: tu titular vs. el titular promedio de la liga
     const fuerza = ["QB", "RB", "WR", "TE", "K", "DST"].filter((p) => M.cfg.slots[p]).map((p) => {
@@ -550,9 +546,8 @@
             <tbody>${al.titulares.map((x) => filaAl(x)).join("")}
             <tr><td colspan="8" class="sep">Banca</td></tr>
             ${al.banca.map((x) => filaAl(x, true)).join("")}</tbody></table></div>
-          <div class="fila" style="margin-top:10px"><input type="text" id="agregar" list="listaJugadores" placeholder="Agregar jugador a mi equipo…" style="flex:1;min-width:200px">
-            <button class="btn" id="btnAgregar">Agregar</button>
-            <button class="sec" id="btnRestaurar" title="Deshacer tus cambios al roster">Restaurar</button></div>
+          ${ligaMia ? `<p class="nota" style="margin-top:8px">Tu roster viene de ESPN. Si hiciste un cambio allá, da clic en <b>⟳ Actualizar</b>.</p>` : `<div class="fila" style="margin-top:10px"><input type="text" id="agregar" list="listaJugadores" placeholder="Agregar jugador a mi equipo…" style="flex:1;min-width:200px">
+            <button class="btn" id="btnAgregar">Agregar</button></div>`}
         </div>
         <div>
           <div class="panel" id="comparador"></div>
@@ -568,10 +563,9 @@
     $("#semEquipo").onchange = (e) => { semEquipo = +e.target.value; rivalElegido = null; render.equipo(); };
     if ($("#rivalSel")) $("#rivalSel").onchange = (e) => { rivalElegido = e.target.value || null; render.equipo(); };
     const agregar = () => { const id = desdeEntrada($("#agregar").value); if (id && !enRoster(id)) { roster.push(id); guardarRoster(); render.equipo(); } };
-    $("#btnAgregar").onclick = agregar;
+    if ($("#btnAgregar")) $("#btnAgregar").onclick = agregar;
     if ($("#irAgregar")) $("#irAgregar").onclick = (e) => { e.preventDefault(); $("#agregar").scrollIntoView({ behavior: "smooth", block: "center" }); setTimeout(() => $("#agregar").focus(), 300); };
-    $("#agregar").onkeydown = (e) => { if (e.key === "Enter") agregar(); };
-    $("#btnRestaurar").onclick = () => { SY.estado.roster = null; SY.guardar(); cargarRoster(); invalidar(); render.equipo(); };
+    if ($("#agregar")) $("#agregar").onkeydown = (e) => { if (e.key === "Enter") agregar(); };
     el.querySelectorAll("[data-quitar]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); roster = roster.filter((id) => id !== b.dataset.quitar); guardarRoster(); render.equipo(); }));
     pintarComparador();
     pintarNoticiasRoster();
@@ -1041,8 +1035,8 @@
       <h3 style="margin-top:14px">Próximos partidos</h3>
       <div class="tabla-scroll"><table class="mini"><thead><tr><th>Sem</th><th>Rival</th><th>Proyección</th><th class="n">Pts</th><th></th></tr></thead><tbody>${futuras}</tbody></table></div>
       <div class="fila" style="margin-top:14px">
-        ${enRoster(id) ? `<button class="sec" data-acc="quitar">Quitar de mi equipo</button><button class="sec" data-acc="dar">Ofrecerlo en un trade</button>` :
-          `<button class="sec" data-acc="agregar">Agregar a mi equipo</button><button class="sec" data-acc="pedir">Pedirlo en un trade</button>`}
+        ${enRoster(id) ? `${ligaMia ? "" : `<button class="sec" data-acc="quitar">Quitar de mi equipo</button>`}<button class="sec" data-acc="dar">Ofrecerlo en un trade</button>` :
+          `${ligaMia ? "" : `<button class="sec" data-acc="agregar">Agregar a mi equipo</button>`}<button class="sec" data-acc="pedir">Pedirlo en un trade</button>`}
         <button class="sec" data-acc="comparar">Comparar</button>
         <button class="sec" data-acc="seguir">${seguido(id) ? "★ Dejar de seguir" : "☆ Seguir"}</button>
       </div>
@@ -1471,40 +1465,15 @@
           ${sim ? `<td class="n"><div class="fila" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap"><div class="barra ocultar-movil" style="width:60px"><i style="width:${(s ? s.playoffs : 0) * 100}%"></i></div><b>${s ? pct(s.playoffs) : "–"}</b></div></td><td class="n">${s ? pct(s.primero) : "–"}</td>` : ""}
           ${rank ? `<td class="n ocultar-movil">${r ? r.lugar + "º" : "–"}</td>` : ""}</tr>`; }).join("")}
         </tbody></table></div>
-        ${!cfgL ? `<p class="nota">Para ver la probabilidad de playoffs con el calendario y la configuración exacta de tu liga, vuelve a usar el botón de ESPN (paso 2 abajo).</p>` : ""}</div>` : "";
+        ${!cfgL ? `<p class="nota">Para ver la probabilidad de playoffs con el calendario y la configuración exacta de tu liga, da clic en <b>⟳ Actualizar</b>.</p>` : ""}</div>` : "";
     el.innerHTML = `<h2>Tu liga</h2>
       ${SY.hayCuentas ? `<div class="panel bloque" id="cuenta"></div>` : ""}
       ${tablaPos}
-      <div class="panel bloque" id="conectar">${titulo("Conectar tu liga de ESPN", "Con tu liga conectada la página usa su puntuación y alineación exactas, sabe qué equipo tiene a cada jugador y quiénes están libres, calcula tu probabilidad de ganar cada semana y de llegar a playoffs, y arma trades con los rosters reales de tus rivales.")}
-        ${D.liga ? `<p><span class="tag verde">Conectada</span> ${esc(D.liga.nombre || "Tu liga")} · leída el ${esc((D.espnFecha || D.generado || "").slice(0, 16).replace("T", " "))}${cfgL ? " · puntuación y alineación de tu liga" : ""}.
-          Para ponerla al día (rosters, récords, lesiones) da clic en <b>⟳ Actualizar</b> arriba; si ESPN no lo deja desde aquí, repite el paso 2.</p>` : ""}
-        <ol class="pasos">
-          <li><b>Una sola vez:</b> muestra la barra de favoritos de Chrome (<b>Ctrl+Shift+B</b>) y <b>arrastra este botón</b> hasta ella:
-            <a class="btn" style="display:inline-block;text-decoration:none;margin:6px 4px" href="${window.EspnLocal ? EspnLocal.codigoBoton(null, DESTINO) : "#"}" onclick="alert('Arrástrame a tu barra de favoritos y úsame estando en la página de tu liga en ESPN.');return false;">⬇ Bajar mi liga de ESPN</a></li>
-          <li>Abre <a href="https://fantasy.espn.com/football/" target="_blank" rel="noopener">tu liga en fantasy.espn.com</a> (con tu sesión iniciada) y da clic en el favorito <b>⬇ Bajar mi liga de ESPN</b>. ${DESTINO ? "Se abre esta página con tu liga ya puesta al día." : "Se descarga el archivo <code>espn_liga.json</code>."}</li>
-          <li>${DESTINO ? "Si tu navegador bloquea la ventana, el botón descarga <code>espn_liga.json</code>; cárgalo aquí:" : "Regresa aquí y cárgalo:"} <input type="file" id="archivoEspn" accept=".json,application/json"></li>
-        </ol>
-        <p class="nota" id="msgEspn"></p>
-        ${D.liga ? `<button class="sec" id="desconectarEspn">Desconectar liga</button>` : ""}</div>
-      <div class="panel bloque" id="comoActualiza"><h3>Cómo se actualiza</h3>
-        <p>Da clic en <b>⟳ Actualizar</b> (arriba, junto al nombre) cuando quieras. Ese botón:</p>
-        <ul class="pasos">
-          <li>vuelve a leer <b>tu liga de ESPN</b> (rosters, lesiones y proyecciones), si ESPN lo permite desde aquí (ver abajo);</li>
-          <li>trae las <b>estadísticas, partidos y lesiones</b> más nuevas que haya publicadas;</li>
-          <li>${ghToken() ? `<span class="tag verde">activado</span> además <b>manda a bajar las estadísticas en ese momento</b> (tarda unos 3 a 5 minutos).` : `si activas la llave de GitHub de abajo, además <b>manda a bajar las estadísticas en ese momento</b>. Sin la llave, las estadísticas se bajan solas los martes y sábados en la mañana.`}</li>
-        </ul>
-        <p class="nota">Si tu liga de ESPN es privada, algunos navegadores (sobre todo Safari y el iPhone) no dejan que esta página la lea directo. En ese caso el botón te avisa y la liga se actualiza con los pasos 2 y 3 de arriba. Para que el botón también la lea en el teléfono, el administrador de tu liga puede activar en ESPN "League Manager Tools → Basic Settings → Make League Viewable to Public".</p>
-        <h3 style="margin-top:14px">Llave de GitHub (opcional, solo para el dueño de la página)</h3>
-        <p class="nota">Con esta llave el botón puede pedirle a GitHub que baje las estadísticas al momento, sin esperar al martes o sábado. Solo se guarda en este navegador (no se sube a tu cuenta ni a la página) y solo sirve para correr la actualización.</p>
-        <ol class="pasos">
-          <li>Abre <a href="${ghLinkLlave()}" target="_blank" rel="noopener">crear llave en GitHub</a>. En <b>Repository access</b> elige <b>Only select repositories</b> → <b>${esc(ghRepo().r)}</b>. En <b>Permissions</b> pon <b>Actions: Read and write</b>. Da clic en <b>Generate token</b> y copia la llave (empieza con <code>github_pat_</code>).</li>
-          <li>Pégala aquí: <span class="fila" style="display:inline-flex;margin-top:6px"><input type="password" id="ghLlave" placeholder="github_pat_…" autocomplete="off" style="min-width:220px"> <button class="sec" id="ghGuardar" type="button">Guardar</button>${ghToken() ? ` <button class="sec" id="ghQuitar" type="button">Quitar llave</button>` : ""}</span></li>
-        </ol>
-        <p class="nota" id="msgGh"></p></div>
+      ${conectarHTML(cfgL)}
       <div class="grid2 bloque">
         <div class="panel">${titulo("Datos")}
           <p><b>ESPN Fantasy:</b> ${D.fuenteEspn ? `<span class="tag verde">conectado${espnVivo ? " al momento" : ""}</span>` : `<span class="tag amar">sin conexión</span>`} lesiones, % en ligas, proyecciones y análisis de ESPN.</p>
-          <p><b>Estadísticas:</b> nflverse (las oficiales de la NFL), snaps y jugadas en zona roja. Se actualizan solas cada día.</p>
+          <p><b>Estadísticas:</b> nflverse (las oficiales de la NFL), snaps y jugadas en zona roja. Se actualizan solas cada mañana y el domingo antes de los partidos.</p>
           <p><b>En vivo:</b> noticias (Rotowire vía ESPN), marcadores, clima (Open-Meteo) y tendencias de Sleeper.</p>
           <p class="nota">Última actualización: ${D.generado.replace("T", " ")}. <a href="#" id="verAyuda">Cómo funciona la página</a></p></div>
         <div class="panel" id="respaldo">${titulo("Tus datos")}
@@ -1513,13 +1482,47 @@
             <label class="sec" style="display:inline-block;padding:6px 10px;border:1px solid var(--borde);border-radius:8px;background:var(--panel2);cursor:pointer">Cargar respaldo <input type="file" id="archivoRespaldo" accept=".json,application/json" hidden></label></div>
           <p class="nota" id="msgRespaldo"></p></div>
       </div>
-      <div class="panel bloque" id="avisos"></div>`;
+`;
     $("#verAyuda").onclick = (e) => { e.preventDefault(); mostrarAyuda(); };
+    if ($("#btnActualizar2")) $("#btnActualizar2").onclick = () => actualizarTodo();
     conectarEspnUI();
     llaveGhUI();
     cuentaUI();
-    avisosUI();
   };
+
+  // Conectar y poner al día la liga: el botón ⟳ Actualizar es el camino principal;
+  // el favorito de ESPN solo se necesita la primera vez o si ESPN no deja leer la liga desde aquí.
+  function conectarHTML(cfgL) {
+    const c = window.EspnLocal ? EspnLocal.leer() : null;
+    const sabeLiga = !!(c && c.ligaId);
+    const pasos = `<ol class="pasos">
+          <li><b>Una sola vez:</b> muestra la barra de favoritos de Chrome (<b>Ctrl+Shift+B</b>) y <b>arrastra este botón</b> hasta ella:
+            <a class="btn" style="display:inline-block;text-decoration:none;margin:6px 4px" href="${window.EspnLocal ? EspnLocal.codigoBoton(null, DESTINO) : "#"}" onclick="alert('Arrástrame a tu barra de favoritos y úsame estando en la página de tu liga en ESPN.');return false;">⬇ Bajar mi liga de ESPN</a></li>
+          <li>Abre <a href="https://fantasy.espn.com/football/" target="_blank" rel="noopener">tu liga en fantasy.espn.com</a> (con tu sesión iniciada) y da clic en el favorito <b>⬇ Bajar mi liga de ESPN</b>. ${DESTINO ? "Se abre esta página con tu liga ya puesta al día." : "Se descarga el archivo <code>espn_liga.json</code>."}</li>
+          <li>${DESTINO ? "Si tu navegador bloquea la ventana, el botón descarga <code>espn_liga.json</code>; cárgalo aquí:" : "Regresa aquí y cárgalo:"} <input type="file" id="archivoEspn" accept=".json,application/json"></li>
+        </ol>
+        <p class="nota" id="msgEspn"></p>`;
+    const llave = `<details class="detalles"><summary>Bajar estadísticas al momento (opcional, solo para el dueño de la página)</summary>
+        <p class="nota">Sin esto, las estadísticas se bajan solas cada mañana y el domingo antes de los partidos. Con una llave de GitHub, <b>⟳ Actualizar</b> también las baja en ese momento (tarda de 3 a 5 minutos). La llave solo se guarda en este navegador.</p>
+        <ol class="pasos">
+          <li>Abre <a href="${ghLinkLlave()}" target="_blank" rel="noopener">crear llave en GitHub</a>. En <b>Repository access</b> elige <b>Only select repositories</b> → <b>${esc(ghRepo().r)}</b>. En <b>Permissions</b> pon <b>Actions: Read and write</b>. Da clic en <b>Generate token</b> y copia la llave (empieza con <code>github_pat_</code>).</li>
+          <li>Pégala aquí: <span class="fila" style="display:inline-flex;margin-top:6px"><input type="password" id="ghLlave" placeholder="github_pat_…" autocomplete="off" style="min-width:220px"> <button class="sec" id="ghGuardar" type="button">Guardar</button>${ghToken() ? ` <button class="sec" id="ghQuitar" type="button">Quitar llave</button>` : ""}</span></li>
+        </ol>
+        ${ghToken() ? `<p><span class="tag verde">Llave activada</span> en este navegador.</p>` : ""}
+        <p class="nota" id="msgGh"></p></details>`;
+    if (D.liga && sabeLiga) return `<div class="panel bloque" id="conectar">${titulo("Tu liga de ESPN")}
+        <p><span class="tag verde">Conectada</span> ${esc(D.liga.nombre || "Tu liga")} · leída el ${esc((D.espnFecha || D.generado || "").slice(0, 16).replace("T", " "))}${cfgL ? " · con su puntuación y alineación" : ""}.</p>
+        <p>Para ponerla al día (rosters, titulares, lesiones, waivers) da clic en <button class="btn chico-b" type="button" id="btnActualizar2">⟳ Actualizar</button> aquí o arriba. También baja las estadísticas más nuevas.</p>
+        <details class="detalles"><summary>Si el botón no puede leer tu liga (liga privada en iPhone o Safari)</summary>
+          <p class="nota">Algunos navegadores no dejan que esta página lea una liga privada de ESPN. En ese caso usa el favorito desde la computadora:</p>${pasos}</details>
+        ${llave}
+        <button class="sec" id="desconectarEspn" style="margin-top:10px">Desconectar liga</button></div>`;
+    return `<div class="panel bloque" id="conectar">${titulo("Conectar tu liga de ESPN", "Con tu liga conectada la página usa su puntuación y alineación exactas, sabe qué equipo tiene a cada jugador y quiénes están libres, calcula tu probabilidad de ganar cada semana y de llegar a playoffs, y arma trades con los rosters reales de tus rivales.")}
+        ${D.liga ? `<p><span class="tag amar">Falta un paso</span> Usa el favorito una vez más para que <b>⟳ Actualizar</b> aprenda el número de tu liga. Después ya no lo necesitas.</p>` : `<p>Se hace una sola vez. Después tu liga se pone al día con el botón <b>⟳ Actualizar</b>.</p>`}
+        ${pasos}
+        ${llave}
+        ${D.liga ? `<button class="sec" id="desconectarEspn">Desconectar liga</button>` : ""}</div>`;
+  }
 
   // Ayuda general (lo que antes ocupaba la pestaña de datos)
   function mostrarAyuda() {
@@ -1527,12 +1530,12 @@
     abrirModalHTML(`<h2>Cómo funciona</h2>
       <h3 style="margin-top:12px">Qué hace cada pestaña</h3>
       <ul class="lista-ayuda">
-        <li><b>Mi equipo:</b> tu probabilidad de ganar la semana, alineación recomendada, comparador "¿A quién alineo?", noticias de tus jugadores y marcador en vivo los días de partido.</li>
+        <li><b>Mi equipo:</b> lo que conviene hacer esta semana, tu probabilidad de ganar, alineación recomendada, comparador "¿A quién alineo?", noticias, marcador en vivo y cuántos puntos dejaste en la banca.</li>
         <li><b>Partidos:</b> marcador, yardas y TDs esperados de cada partido NFL, clima, defensa vs. posición y qué tan bien ha predicho el modelo.</li>
         <li><b>Jugadores:</b> proyecciones, valor de trade y su cambio semanal; filtra agentes libres.</li>
         <li><b>Trades:</b> analiza si un trade es justo para ti y para el otro equipo, y la tabla de valores.</li>
         <li><b>Mercado:</b> trades sugeridos, waivers (con oferta FAAB), a quién soltar, comprar barato y vender caro.</li>
-        <li><b>Liga:</b> tabla, probabilidad de playoffs, conexión con ESPN, tu cuenta y avisos.</li>
+        <li><b>Liga:</b> tabla, probabilidad de playoffs, conexión con ESPN y tu cuenta.</li>
       </ul>
       <h3 style="margin-top:12px">Puntuación ${M.cfg.deLiga ? "(de tu liga de ESPN)" : "(liga de ejemplo: conecta la tuya para usar la real)"}</h3>
       <table class="mini"><tbody>
@@ -1545,7 +1548,7 @@
         <tr><td>Playoffs de fantasy</td><td>semanas ${PLAYOFFS.join(", ")}</td></tr>
       </tbody></table>
       <h3 style="margin-top:12px">Cómo predice</h3>
-      <p class="nota">Cada jugador tiene un promedio por partido de esta temporada (las semanas recientes pesan más) combinado con la temporada pasada. Sus TDs se ajustan hacia lo que sugieren sus yardas y sus jugadas en zona roja, y su volumen sube o baja si está jugando más o menos snaps. Para cada partido se predice el marcador y las yardas de cada equipo con ofensivas y defensas ajustadas por rival, mezclado con la línea de las casas de apuestas, y se ajusta por el clima. Se descuentan lesiones y semanas de descanso, y para la semana actual se mezcla con la proyección de ESPN. El valor de trade es lo que aportará el resto de la temporada por encima de un jugador de waivers.</p>
+      <p class="nota">Cada jugador tiene un promedio por partido de esta temporada (las semanas recientes pesan más) combinado con la temporada pasada. Sus TDs se ajustan hacia lo que sugieren sus yardas y sus jugadas en zona roja, y su volumen sube o baja si está jugando más o menos snaps. Para cada partido se predice el marcador y las yardas de cada equipo con ofensivas y defensas ajustadas por rival, mezclado con la línea de las casas de apuestas, y se ajusta por el clima. Se descuentan lesiones y semanas de descanso, y para la semana actual se mezcla con la proyección de ESPN. El valor de trade es lo que aportará el resto de la temporada por encima de un jugador de waivers. Si un compañero no juega, sus targets y acarreos se reparten entre los demás; si falta el QB titular, el suplente hereda su volumen y sus receptores bajan un poco. Cada día el modelo se compara contra lo que pasó y ajusta sus parámetros (ver Partidos → Qué tan bien predice).</p>
       <h3 style="margin-top:12px">Cuándo se actualiza</h3>
       <p class="nota">Las estadísticas se actualizan solas cada mañana y antes de los partidos del domingo. Lesiones, proyecciones de ESPN, noticias, clima y marcadores se leen al momento cada vez que abres la página.</p>`);
   }
@@ -1768,31 +1771,6 @@
     if (d) d.onclick = () => { SY.borrarEspn().then(() => location.reload()); };
   }
 
-  // Avisos al teléfono (notificaciones)
-  function avisosUI() {
-    const el = $("#avisos");
-    if (!el) return;
-    const AV = window.Avisos;
-    if (!AV || !AV.soportado()) {
-      el.innerHTML = `${titulo("🔔 Avisos al teléfono")}<p class="nota">Este navegador no permite notificaciones. En iPhone: abre la página en Safari, toca Compartir → <b>Agregar a pantalla de inicio</b>, ábrela desde ese ícono y regresa aquí.</p>`;
-      return;
-    }
-    const estado = AV.estado();
-    el.innerHTML = `${titulo("🔔 Avisos de lesiones", "Te avisamos cuando un jugador de tu roster cambia de estado en ESPN (por ejemplo, pasa a Fuera o Dudoso, o regresa). Se revisa cada vez que abres la página; en Android, con la página instalada en tu pantalla de inicio, también cada pocas horas aunque esté cerrada.")}
-      ${estado === "activo" ? `<p><span class="tag verde">Activados</span> en este dispositivo para ${roster.filter((id) => M.porId[id].eid).length} jugadores de tu roster.</p><div class="fila"><button class="sec" id="avProbar">Mandar aviso de prueba</button><button class="sec" id="avQuitar">Desactivar</button></div>` :
-        estado === "bloqueado" ? `<p class="nota">Bloqueaste las notificaciones para esta página. Actívalas en la configuración del navegador y vuelve a intentar.</p>` :
-        `<button class="btn" id="avActivar">Activar avisos en este dispositivo</button>`}
-      <p class="nota">En iPhone primero agrega la página a tu pantalla de inicio (Compartir → Agregar a inicio) y ábrela desde ahí.</p>
-      <p class="nota" id="avMsg"></p>`;
-    const msg = (t, malo) => { $("#avMsg").innerHTML = malo ? `<span class="malo">${esc(t)}</span>` : esc(t); };
-    if ($("#avActivar")) $("#avActivar").onclick = async () => {
-      msg("Activando…");
-      try { await AV.activar(SY); msg("Listo. Te llegará un aviso cuando cambie el estado de tus jugadores."); avisosUI(); } catch (e) { msg(e.message, true); }
-    };
-    if ($("#avQuitar")) $("#avQuitar").onclick = async () => { await AV.desactivar(SY); avisosUI(); };
-    if ($("#avProbar")) $("#avProbar").onclick = async () => { msg("Enviando…"); try { await AV.probar(SY); msg("Enviado. Debe llegarte en unos segundos."); } catch (e) { msg(e.message, true); } };
-  }
-
   // Cuenta: iniciar sesión para sincronizar entre dispositivos
   function cuentaUI() {
     const el = $("#cuenta");
@@ -1807,7 +1785,7 @@
       return;
     }
     el.innerHTML = `${titulo("Tu cuenta")}
-      <p>Inicia sesión para tener tu equipo, tu liga, tus trades y seguimientos en tu computadora y tu teléfono al mismo tiempo, y para recibir avisos.</p>
+      <p>Inicia sesión para tener tu equipo, tu liga, tus trades, seguimientos y decisiones en tu computadora y tu teléfono al mismo tiempo.</p>
       <button class="sec" id="btnGoogle" type="button" style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;font-weight:600">
         <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
         Continuar con Google</button>
@@ -1857,11 +1835,10 @@
       el.onclick = () => { abrir("liga"); const c = $("#cuenta"); if (c) c.scrollIntoView({ behavior: "smooth" }); };
     }
     cuentaUI();
-    avisosUI();
   }
   SY.alCambiar((que) => {
     if (que === "modo" || que === "usuario") pintarSync();
-    if (que === "estado") { cargarRoster(); recalcularTodo(); repintar(); rosterAAvisos(); }
+    if (que === "estado") { cargarRoster(); recalcularTodo(); repintar(); }
     if (que === "espn") location.reload();
   });
   // Alto del encabezado (para que el encabezado de las tablas se quede fijo al bajar)
@@ -1875,6 +1852,5 @@
   // Inicio
   abrir(actual);
   setTimeout(cargarEnVivo, 50);
-  setTimeout(rosterAAvisos, 1500);
   document.addEventListener("visibilitychange", () => { if (!document.hidden && vivo) revisarVivo(); });
 })();
