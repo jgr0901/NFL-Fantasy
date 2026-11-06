@@ -686,7 +686,19 @@
       const z = -dif * 4 + impactoOtro.porSemana * 0.35;
       acepta = clamp(1 / (1 + Math.exp(-z)), 0.03, 0.97);
     }
-    return { vD, vR, dif, veredicto, clase, impacto, impactoOtro, acepta };
+    // Un solo veredicto: si das jugadores de tu roster, manda lo que gana o pierde tu alineación.
+    // El "valor" solo queda como respaldo (cuando no hay roster) y para estimar si lo aceptarían.
+    let porPuntos = false;
+    if (impacto) {
+      porPuntos = true;
+      const s = impacto.porSemana;
+      if (s >= 1) { veredicto = `Te conviene: +${s.toFixed(1)} pts por semana`; clase = "favor"; }
+      else if (s >= 0.3) { veredicto = `Te conviene un poco: +${s.toFixed(1)} pts por semana`; clase = "favor"; }
+      else if (s > -0.3) { veredicto = "Casi no cambia tu equipo"; clase = "justo"; }
+      else if (s > -1) { veredicto = `No te conviene: ${s.toFixed(1)} pts por semana`; clase = "contra"; }
+      else { veredicto = `No te conviene: pierdes ${(-s).toFixed(1)} pts por semana`; clase = "contra"; }
+    }
+    return { vD, vR, dif, veredicto, clase, impacto, impactoOtro, acepta, porPuntos };
   }
 
   // ---------------- Defensa vs. posición ----------------

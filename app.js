@@ -1138,7 +1138,7 @@
     if (vistaTrades === "valores") { el.innerHTML = pest + tablaValores(); conectarTrades(el); return; }
     const lado = (clave, tit) => {
       const ids = trade[clave];
-      return `<div class="panel lado-trade ${clave}">${titulo(tit, null, ids.length ? `<span class="tag ${clave === "doy" ? "rojo" : "verde"}">valor ${f0(M.valorLado(ids))}</span>` : "")}
+      return `<div class="panel lado-trade ${clave}">${titulo(tit)}
         <div class="fila"><input type="text" list="listaJugadores" id="in-${clave}" placeholder="Escribe un jugador…" style="flex:1;min-width:180px"><button class="btn" data-add="${clave}">Agregar</button></div>
         <ul class="lista-trade">${ids.map((id) => { const x = M.porId[id].fila; return `<li><div class="clic" data-j="${id}" style="cursor:pointer">${jugHTML(x.j, "resto: " + f0(x.ros) + " pts")}</div>
           <div class="fila" style="gap:8px"><span class="fuerte">${x.valor}</span>${tendenciaHTML(x)}<button class="x" data-del="${clave}" data-id="${id}">×</button></div></li>`; }).join("") || `<li class="nota">Nadie todavía</li>`}</ul>
@@ -1162,19 +1162,24 @@
       const playD = M.sum(trade.doy.map((id) => M.porId[id].fila.playoffs)), playR = M.sum(trade.recibo.map((id) => M.porId[id].fila.playoffs));
       const avisos = trade.recibo.map((id) => { const x = M.porId[id].fila; const rz = razonesVenta(x); return rz.length && x.ppg - x.rosPG >= 1.5 ? `<li>⚠️ <b>${esc(x.j.n)}</b>: ${esc(rz.join("; "))}. Probablemente baje.</li>` : ""; }).join("")
         + trade.doy.map((id) => { const x = M.porId[id].fila; const rz = razonesCompra(x); return rz.length && x.rosPG - x.ppg >= 1.5 ? `<li>💡 <b>${esc(x.j.n)}</b> podría subir: ${esc(rz.join("; "))}.</li>` : ""; }).join("");
-      const pos = Math.max(0, Math.min(100, 50 + r.dif * 125)); // -0.4 → 0%, +0.4 → 100%
+      const pos = r.porPuntos ? Math.max(0, Math.min(100, 50 + r.impacto.porSemana * 12)) : Math.max(0, Math.min(100, 50 + r.dif * 125));
+      const justo = Math.abs(r.dif) < 0.1 ? "parejo en valor" : r.dif > 0 ? "a tu favor en valor (les cuesta más aceptarlo)" : "a favor del otro equipo en valor";
       res = `<div class="veredicto ${r.clase}"><div class="ver-cab"><span class="ver-ico" aria-hidden="true">${r.clase === "justo" ? "⚖️" : r.clase === "favor" ? "✅" : "❌"}</span><h3>${r.veredicto}</h3></div>
         <div class="balanza" role="img" aria-label="${esc(r.veredicto)}"><div class="bz-pista"><span class="bz-justo"></span><span class="bz-aguja" style="left:${pos}%"></span></div>
-          <div class="fila entre bz-lbl"><span>Pierdes</span><span>Justo</span><span>Ganas</span></div></div>
+          <div class="fila entre bz-lbl"><span>Pierdes</span><span>${r.porPuntos ? "Igual" : "Justo"}</span><span>Ganas</span></div></div>
+        ${r.porPuntos ? `<p class="nota" style="margin-top:6px">Tu alineación de aquí al final: ${f0(r.impacto.antes)} → ${f0(r.impacto.luego)} pts. Cuenta a quién pondrías de titular cada semana, descansos y lesiones.</p>` : ""}
+        ${impO}
+        <details class="detalles"><summary>Valor de trade de cada lado (${justo})</summary>
         <div class="grid2" style="margin-top:10px">
           <div><div class="nota">Valor que das</div><div class="fila"><div class="barra" style="flex:1"><i style="width:${(r.vD / max) * 100}%;background:var(--rojo)"></i></div><b>${f0(r.vD)}</b></div></div>
           <div><div class="nota">Valor que recibes</div><div class="fila"><div class="barra" style="flex:1"><i style="width:${(r.vR / max) * 100}%"></i></div><b>${f0(r.vR)}</b></div></div>
-        </div>${imp}${impO}
+        </div><p class="nota">El valor mide lo que aporta cada jugador por encima de uno de waivers, sin importar tu roster. Sirve para saber si el otro equipo lo vería justo.</p></details>
+        ${r.porPuntos ? "" : imp}
         ${avisos ? `<ul class="avisos">${avisos}</ul>` : ""}
         <p class="nota" style="margin-top:8px">${recibeMejor ? "Recibes al mejor jugador del trade; eso suele valer más que varias piezas medianas. " : "Das al mejor jugador del trade; asegúrate de que lo que recibes llene una necesidad real. "}
         Playoffs de fantasy (semanas ${PLAYOFFS.join(", ")}): das ${f0(playD)} pts proyectados y recibes ${f0(playR)}.</p></div>`;
     }
-    el.innerHTML = `${pest}<h2>Analizar un trade ${ayuda("El veredicto compara el valor de cada lado: lo que aportarán el resto de la temporada por encima de un jugador de reemplazo (las piezas extra valen menos porque ocupan lugar en el roster). Si das jugadores de tu equipo, también calcula cuántos puntos por semana ganarías o perderías en tu alineación.")}</h2>
+    el.innerHTML = `${pest}<h2>Analizar un trade ${ayuda("Si das jugadores de tu equipo, el veredicto es cuántos puntos por semana gana o pierde tu mejor alineación de aquí al final de la temporada. Si no, compara el valor de cada lado (lo que aportará cada jugador por encima de uno de waivers).")}</h2>
       <div class="lados bloque">${lado("doy", "📤 Tú das")}${lado("recibo", "📥 Tú recibes")}</div>${res}
       ${trade.doy.length || trade.recibo.length ? `<div class="fila" style="margin-top:12px">
         ${trade.doy.length && trade.recibo.length ? `<input type="text" id="notaTrade" placeholder="Nota: con quién, qué te contestaron…" style="flex:1;min-width:200px"><button class="btn" id="guardarTrade">Guardar trade</button><button class="sec" id="tradeHecho" title="Guárdalo como hecho para seguir si te convino">Ya lo hice</button>` : ""}
@@ -1240,9 +1245,9 @@
     if (!L.length) return `<div class="panel bloque">${titulo("Trades guardados")}<p class="nota">Cuando analices un trade, guárdalo con una nota para revisarlo después desde cualquier dispositivo.</p></div>`;
     return `<div class="panel bloque">${titulo("Trades guardados")}<div class="tabla-scroll"><table class="mini"><thead><tr><th>Das</th><th>Recibes</th><th>Hoy</th><th>Nota</th><th></th></tr></thead><tbody>${L.map((t) => {
       const doy = t.doy.filter((i) => M.porId[i]), rec = t.recibo.filter((i) => M.porId[i]);
-      const r = doy.length && rec.length ? M.evaluarTrade(doy, rec, null) : null;
+      const r = doy.length && rec.length ? M.evaluarTrade(doy, rec, !t.hecho && roster.some((id) => doy.includes(id)) ? roster : null) : null;
       return `<tr><td>${doy.map((i) => esc(M.porId[i].n)).join(", ")}</td><td>${rec.map((i) => esc(M.porId[i].n)).join(", ")}</td>
-        <td>${r ? `<span class="tag ${r.clase === "justo" ? "azul" : r.clase === "favor" ? "verde" : "rojo"}">${esc(r.veredicto.split(" (")[0])}</span>` : "–"}<div class="nota">${esc(t.fecha || "")}</div></td>
+        <td>${r ? `<span class="tag ${r.clase === "justo" ? "azul" : r.clase === "favor" ? "verde" : "rojo"}">${r.porPuntos ? (r.impacto.porSemana >= 0 ? "+" : "") + f1(r.impacto.porSemana) + " pts/sem" : esc(r.veredicto.split(" (")[0])}</span>` : "–"}<div class="nota">${esc(t.fecha || "")}</div></td>
         <td><input type="text" data-tnota="${t.id}" value="${esc(t.nota || "")}" placeholder="Agregar nota" style="width:100%;min-width:140px"></td>
         <td><div class="fila" style="gap:6px;flex-wrap:nowrap"><button class="sec" data-tcargar="${t.id}">Abrir</button>${t.hecho ? `<span class="tag verde" title="Lo hiciste en la semana ${t.hecho}">Hecho S${t.hecho}</span>` : `<button class="sec" data-thecho="${t.id}" title="Márcalo si lo aceptaron, para seguir si te convino">Ya lo hice</button>`}<button class="sec" data-tborrar="${t.id}">Borrar</button></div></td></tr>`;
     }).join("")}</tbody></table></div></div>`;
