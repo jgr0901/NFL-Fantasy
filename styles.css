@@ -524,3 +524,15 @@ a.kpi-link { color: inherit; text-decoration: none; display: block; }
 @keyframes girar { to { transform: rotate(360deg); } }
 .aviso-flotante { position: fixed; left: 16px; right: 16px; bottom: 16px; z-index: 30; max-width: 560px; margin: 0 auto; text-align: center; border: 1px solid var(--borde); box-shadow: var(--sombra); line-height: 1.5; }
 @media (max-width: 600px) { .btn-act { padding: 8px 11px; } .btn-act .txt { display: none; } .btn-act .ico { font-size: 20px; } }
+
+/* ---------- Esta semana ---------- */
+.esta-semana { margin-top: 14px; border-top: 3px solid var(--marca2); }
+.es-lista { list-style: none; margin: 0; padding: 0; }
+.es-lista > li { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--borde); line-height: 1.45; }
+.es-lista > li:last-child { border-bottom: 0; padding-bottom: 0; }
+.es-lista > li > div { flex: 1; min-width: 0; }
+.es-ico { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--marca-bg); font-size: 15px; }
+.lista-cambios { margin: 6px 0 0; padding-left: 4px; list-style: none; }
+.lista-cambios li { margin: 3px 0; }
+.es-lista .lista-al { margin-top: 8px; }
+.es-lista button.sec.chico { margin-left: 4px; }

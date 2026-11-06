@@ -622,8 +622,10 @@
   }
 
   // ---------------- Alineación y trades ----------------
-  function alineacion(ids, w) {
+  // fnPts (opcional): otra forma de dar los puntos de cada jugador, p. ej. sus puntos reales
+  function alineacion(ids, w, fnPts) {
     const ps = ids.filter((id) => porId[id]).map((id) => {
+      if (fnPts) return { id, pos: porId[id].pos, pts: fnPts(id) };
       const pr = proyectarSemana(porId[id], w);
       return { id, pos: porId[id].pos, pts: pr.pts, pr };
     }).sort((a, b) => b.pts - a.pts);

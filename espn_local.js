@@ -115,12 +115,13 @@
     (liga.members || []).forEach((m) => (miembros[m.id] = ((m.firstName || "") + " " + (m.lastName || "")).trim() || m.displayName || ""));
     const swid = (raw.swid || "").toUpperCase();
     const equipos = (liga.teams || []).map((t) => {
-      const ids = [];
+      const ids = [], tit = [];
       ((t.roster || {}).entries || []).forEach((en) => {
         const p = (en.playerPoolEntry || {}).player || {};
         const id = p.id !== undefined ? p.id : en.playerId;
         if (id === undefined) return;
         ids.push(id);
+        if (en.lineupSlotId !== undefined && en.lineupSlotId !== 20 && en.lineupSlotId !== 21) tit.push(id); // 20 banca, 21 IR
         if (!jug[id] && p.id !== undefined) jug[id] = datosJugador(p, semana);
       });
       const owners = (t.owners || []).map((o) => String(o).toUpperCase());
@@ -128,7 +129,7 @@
       const dueno = (t.owners && miembros[t.owners[0]]) || "";
       const o = (t.record && t.record.overall) || {};
       const tc = t.transactionCounter || {};
-      return { id: t.id, nombre, abrev: t.abbrev || "", dueno, owners, espnIds: ids,
+      return { id: t.id, nombre, abrev: t.abbrev || "", dueno, owners, espnIds: ids, espnTit: tit,
         record: o.wins !== undefined ? o.wins + "-" + o.losses + (o.ties ? "-" + o.ties : "") : "",
         w: o.wins || 0, l: o.losses || 0, t: o.ties || 0, pf: o.pointsFor || t.points || 0, pa: o.pointsAgainst || 0,
         faabGastado: tc.acquisitionBudgetSpent || 0, logo: t.logo || "" };
@@ -184,7 +185,11 @@
     });
     D.liga = {
       nombre: c.liga.nombre, fecha: c.fecha, calendario: c.liga.calendario || [], periodo: c.periodo || c.semana, cfg: c.liga.cfg || null,
-      equipos: c.liga.equipos.map((eq) => Object.assign({}, eq, { jugadores: eq.espnIds.map((x) => aId[x]).filter(Boolean) })),
+      semana: c.semana || null,
+      equipos: c.liga.equipos.map((eq) => Object.assign({}, eq, {
+        jugadores: eq.espnIds.map((x) => aId[x]).filter(Boolean),
+        titulares: eq.espnTit && eq.espnTit.length ? eq.espnTit.map((x) => aId[x]).filter(Boolean) : null,
+      })),
     };
     D.fuenteEspn = true;
     D.espnFecha = c.fecha;
