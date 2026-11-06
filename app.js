@@ -1328,7 +1328,7 @@
       ${tablaPos}
       <div class="panel bloque" id="conectar">${titulo("Conectar tu liga de ESPN", "Con tu liga conectada la página usa su puntuación y alineación exactas, sabe qué equipo tiene a cada jugador y quiénes están libres, calcula tu probabilidad de ganar cada semana y de llegar a playoffs, y arma trades con los rosters reales de tus rivales.")}
         ${D.liga ? `<p><span class="tag verde">Conectada</span> ${esc(D.liga.nombre || "Tu liga")} · leída el ${esc((D.espnFecha || D.generado || "").slice(0, 16).replace("T", " "))}${cfgL ? " · puntuación y alineación de tu liga" : ""}.
-          Para ponerla al día (rosters, récords, lesiones) repite el paso 2 cuando quieras, por ejemplo después de los waivers.</p>` : ""}
+          Para ponerla al día (rosters, récords, lesiones) da clic en <b>⟳ Actualizar</b> arriba; si ESPN no lo deja desde aquí, repite el paso 2.</p>` : ""}
         <ol class="pasos">
           <li><b>Una sola vez:</b> muestra la barra de favoritos de Chrome (<b>Ctrl+Shift+B</b>) y <b>arrastra este botón</b> hasta ella:
             <a class="btn" style="display:inline-block;text-decoration:none;margin:6px 4px" href="${window.EspnLocal ? EspnLocal.codigoBoton(null, DESTINO) : "#"}" onclick="alert('Arrástrame a tu barra de favoritos y úsame estando en la página de tu liga en ESPN.');return false;">⬇ Bajar mi liga de ESPN</a></li>
@@ -1337,6 +1337,21 @@
         </ol>
         <p class="nota" id="msgEspn"></p>
         ${D.liga ? `<button class="sec" id="desconectarEspn">Desconectar liga</button>` : ""}</div>
+      <div class="panel bloque" id="comoActualiza"><h3>Cómo se actualiza</h3>
+        <p>Da clic en <b>⟳ Actualizar</b> (arriba, junto al nombre) cuando quieras. Ese botón:</p>
+        <ul class="pasos">
+          <li>vuelve a leer <b>tu liga de ESPN</b> (rosters, lesiones y proyecciones), si ESPN lo permite desde aquí (ver abajo);</li>
+          <li>trae las <b>estadísticas, partidos y lesiones</b> más nuevas que haya publicadas;</li>
+          <li>${ghToken() ? `<span class="tag verde">activado</span> además <b>manda a bajar las estadísticas en ese momento</b> (tarda unos 3 a 5 minutos).` : `si activas la llave de GitHub de abajo, además <b>manda a bajar las estadísticas en ese momento</b>. Sin la llave, las estadísticas se bajan solas los martes y sábados en la mañana.`}</li>
+        </ul>
+        <p class="nota">Si tu liga de ESPN es privada, algunos navegadores (sobre todo Safari y el iPhone) no dejan que esta página la lea directo. En ese caso el botón te avisa y la liga se actualiza con los pasos 2 y 3 de arriba. Para que el botón también la lea en el teléfono, el administrador de tu liga puede activar en ESPN "League Manager Tools → Basic Settings → Make League Viewable to Public".</p>
+        <h3 style="margin-top:14px">Llave de GitHub (opcional, solo para el dueño de la página)</h3>
+        <p class="nota">Con esta llave el botón puede pedirle a GitHub que baje las estadísticas al momento, sin esperar al martes o sábado. Solo se guarda en este navegador (no se sube a tu cuenta ni a la página) y solo sirve para correr la actualización.</p>
+        <ol class="pasos">
+          <li>Abre <a href="${ghLinkLlave()}" target="_blank" rel="noopener">crear llave en GitHub</a>. En <b>Repository access</b> elige <b>Only select repositories</b> → <b>${esc(ghRepo().r)}</b>. En <b>Permissions</b> pon <b>Actions: Read and write</b>. Da clic en <b>Generate token</b> y copia la llave (empieza con <code>github_pat_</code>).</li>
+          <li>Pégala aquí: <span class="fila" style="display:inline-flex;margin-top:6px"><input type="password" id="ghLlave" placeholder="github_pat_…" autocomplete="off" style="min-width:220px"> <button class="sec" id="ghGuardar" type="button">Guardar</button>${ghToken() ? ` <button class="sec" id="ghQuitar" type="button">Quitar llave</button>` : ""}</span></li>
+        </ol>
+        <p class="nota" id="msgGh"></p></div>
       <div class="grid2 bloque">
         <div class="panel">${titulo("Datos")}
           <p><b>ESPN Fantasy:</b> ${D.fuenteEspn ? `<span class="tag verde">conectado${espnVivo ? " al momento" : ""}</span>` : `<span class="tag amar">sin conexión</span>`} lesiones, % en ligas, proyecciones y análisis de ESPN.</p>
@@ -1352,6 +1367,7 @@
       <div class="panel bloque" id="avisos"></div>`;
     $("#verAyuda").onclick = (e) => { e.preventDefault(); mostrarAyuda(); };
     conectarEspnUI();
+    llaveGhUI();
     cuentaUI();
     avisosUI();
   };
@@ -1387,8 +1403,8 @@
   $("#btnAyuda").onclick = mostrarAyuda;
 
   // Recibir la liga directo desde el botón de ESPN (sin archivo)
-  function aplicarLigaEspn(raw) {
-    const c = EspnLocal.compactar(raw, "");
+  function aplicarLigaEspn(raw, miId) {
+    const c = EspnLocal.compactar(raw, "", miId);
     if (!c.liga.equipos.length) throw new Error("ESPN no mandó equipos");
     SY.estado.roster = null;
     SY.guardar();
@@ -1412,6 +1428,137 @@
     try { window.opener.postMessage("nflf-listo", "*"); } catch (e) { /* sin ventana de ESPN */ }
     setTimeout(() => { if (aviso.isConnected && /Recibiendo/.test(aviso.textContent)) aviso.textContent = "No llegó nada de ESPN. Vuelve a dar clic en el favorito estando en tu liga."; }, 20000);
   }
+
+  // ---------------- Botón Actualizar ----------------
+  // 1) Vuelve a leer la liga de ESPN directo (si ESPN lo permite desde esta página).
+  // 2) Con la llave de GitHub, corre la actualización de estadísticas (actualizar.yml) y espera el resultado.
+  // 3) Revisa si hay un data.js más nuevo publicado y recarga.
+  const K_GH = "nflf_gh";
+  function ghToken() { try { return localStorage.getItem(K_GH) || ""; } catch (e) { return ""; } }
+  function ghRepo() {
+    const m = location.hostname.match(/^([a-z0-9-]+)\.github\.io$/i);
+    const r = location.pathname.split("/").filter(Boolean)[0];
+    return m && r ? { o: m[1], r } : { o: "jgr0901", r: "nfl-fantasy" };
+  }
+  function ghLinkLlave() {
+    const q = new URLSearchParams({ name: "NFL Fantasy - boton Actualizar", description: "Deja que el boton Actualizar corra actualizar.yml",
+      target_name: ghRepo().o, expires_in: "366", actions: "write" });
+    return "https://github.com/settings/personal-access-tokens/new?" + q.toString();
+  }
+  function llaveGhUI() {
+    const g = $("#ghGuardar"), q = $("#ghQuitar"), msg = (t, malo) => { $("#msgGh").innerHTML = malo ? `<span class="malo">${esc(t)}</span>` : esc(t); };
+    if (g) g.onclick = async () => {
+      const t = $("#ghLlave").value.trim();
+      if (!t) { msg("Pega primero la llave.", true); return; }
+      msg("Probando la llave…");
+      try {
+        const { o, r } = ghRepo();
+        const res = await fetch(`https://api.github.com/repos/${o}/${r}/actions/workflows/actualizar.yml`, { headers: { Authorization: "Bearer " + t, Accept: "application/vnd.github+json" } });
+        if (!res.ok) throw new Error(res.status === 401 ? "GitHub no reconoce esa llave." : res.status === 404 ? `Esa llave no tiene acceso al repositorio ${r}.` : "GitHub respondió " + res.status);
+        localStorage.setItem(K_GH, t);
+        msg("Llave guardada. Ya puedes usar ⟳ Actualizar.");
+        setTimeout(() => render.liga(), 1200);
+      } catch (err) { msg(err.message, true); }
+    };
+    if (q) q.onclick = () => { try { localStorage.removeItem(K_GH); } catch (e) { /* nada */ } render.liga(); };
+  }
+
+  const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function generadoPublicado() {
+    const r = await fetch("data.js?t=" + Date.now(), { cache: "no-store" });
+    if (!r.ok) throw new Error("data.js " + r.status);
+    const m = (await r.text()).slice(0, 400).match(/"generado":"([^"]+)"/);
+    return m ? m[1] : null;
+  }
+  async function correrActualizacionGh(t, avance) {
+    const { o, r } = ghRepo();
+    const api = `https://api.github.com/repos/${o}/${r}/actions/workflows/actualizar.yml`;
+    const h = { Authorization: "Bearer " + t, Accept: "application/vnd.github+json" };
+    const inicio = Date.now() - 60000;
+    const res = await fetch(api + "/dispatches", { method: "POST", headers: h, body: JSON.stringify({ ref: "main" }) });
+    if (res.status === 401) throw new Error("la llave de GitHub ya no sirve (¿expiró?). Crea otra en Liga y datos.");
+    if (!res.ok) throw new Error("GitHub respondió " + res.status + " al pedir la actualización");
+    // Espera a que termine (normalmente 2 a 4 minutos)
+    for (let i = 0; i < 60; i++) {
+      await esperar(i ? 10000 : 4000);
+      const lr = await fetch(api + "/runs?event=workflow_dispatch&per_page=5", { headers: h, cache: "no-store" });
+      if (!lr.ok) continue;
+      const run = ((await lr.json()).workflow_runs || []).find((x) => new Date(x.created_at).getTime() >= inicio);
+      if (!run) { avance("Esperando a que GitHub empiece…"); continue; }
+      if (run.status !== "completed") { avance("Bajando estadísticas nuevas… (" + Math.round((Date.now() - inicio - 60000) / 1000) + " s)"); continue; }
+      if (run.conclusion !== "success") throw new Error("la actualización de estadísticas falló en GitHub");
+      return true;
+    }
+    throw new Error("GitHub está tardando mucho; intenta en unos minutos");
+  }
+
+  let actualizando = false;
+  async function actualizarTodo() {
+    if (actualizando) return;
+    actualizando = true;
+    const btn = $("#btnActualizar");
+    btn.disabled = true; btn.classList.add("girando");
+    const aviso = document.createElement("div");
+    aviso.className = "ayuda aviso-flotante";
+    document.body.appendChild(aviso);
+    const decir = (t) => { aviso.innerHTML = t; };
+    const notas = [];
+    let recargar = false;
+    try {
+      // 1) Liga de ESPN
+      const c = EspnLocal.leer();
+      const ligaId = (c && c.ligaId) || (window.MI_EQUIPO && window.MI_EQUIPO.ligaId);
+      if (ligaId) {
+        decir("Leyendo tu liga de ESPN…");
+        try {
+          const raw = await EspnLocal.bajarLiga(ligaId, c && c.temporada);
+          const mio = c && c.liga && c.liga.equipos.find((e) => e.mio);
+          await aplicarLigaEspn(raw, mio ? mio.id : null).catch(() => { /* se guardó en este dispositivo */ });
+          notas.push("✅ Liga de ESPN al día");
+          recargar = true;
+        } catch (e) {
+          notas.push(e.privada
+            ? "⚠️ ESPN no dejó leer tu liga desde aquí (es privada). Usa el favorito <b>⬇ Bajar mi liga de ESPN</b> (pasos 2 y 3 en Liga y datos)."
+            : "⚠️ No pude leer tu liga de ESPN: " + esc(e.message));
+        }
+      } else if (D.liga) {
+        notas.push("⚠️ Para que este botón lea tu liga, usa una vez más el favorito <b>⬇ Bajar mi liga de ESPN</b>; así aprende el número de tu liga.");
+      }
+      // 2) Estadísticas
+      const t = ghToken();
+      if (t) {
+        decir("Pidiendo estadísticas nuevas a GitHub…");
+        try {
+          await correrActualizacionGh(t, decir);
+          decir("Publicando los datos nuevos…");
+          let g = null;
+          for (let i = 0; i < 24; i++) { g = await generadoPublicado().catch(() => null); if (g && g > D.generado) break; await esperar(10000); }
+          if (g && g > D.generado) { notas.push("✅ Estadísticas al día"); recargar = true; }
+          else notas.push("⚠️ Las estadísticas se bajaron pero la página aún no se publica. Vuelve a dar Actualizar en un par de minutos.");
+        } catch (e) { notas.push("⚠️ Estadísticas: " + esc(e.message)); }
+      } else {
+        decir("Buscando estadísticas nuevas…");
+        const g = await generadoPublicado().catch(() => null);
+        if (g && g > D.generado) { notas.push("✅ Estadísticas nuevas"); recargar = true; }
+        else notas.push("Estadísticas: ya tienes las más nuevas (se bajan solas martes y sábados; para bajarlas al momento activa la llave de GitHub en Liga y datos).");
+      }
+      if (recargar) {
+        try { await fetch("data.js", { cache: "reload" }); } catch (e) { /* recarga normal */ }
+        decir(notas.join("<br>") + "<br>Recargando…");
+        await esperar(notas.some((n) => n.startsWith("⚠️")) ? 4000 : 1200);
+        location.reload();
+        return;
+      }
+      decir(notas.join("<br>") + '<br><button class="sec" type="button" style="margin-top:8px">Cerrar</button>');
+      aviso.querySelector("button").onclick = () => aviso.remove();
+    } catch (e) {
+      decir("No se pudo actualizar: " + esc(e.message) + '<br><button class="sec" type="button" style="margin-top:8px">Cerrar</button>');
+      aviso.querySelector("button").onclick = () => aviso.remove();
+    }
+    actualizando = false;
+    btn.disabled = false; btn.classList.remove("girando");
+  }
+  $("#btnActualizar").onclick = actualizarTodo;
 
   function respaldoUI() {
     const nube = !!window.claude;
