@@ -27,7 +27,8 @@
   }
 
   // Convierte el archivo descargado de ESPN a una versión compacta
-  function compactar(raw, miNombre) {
+  // miId: el equipo que ya era mío (para reconocerlo cuando la liga se lee sin la cookie SWID)
+  function compactar(raw, miNombre, miId) {
     const liga = raw.liga || {};
     const semana = raw.semana || liga.scoringPeriodId || null;
     const jug = {};
@@ -55,6 +56,7 @@
     });
     // ¿Cuál es mi equipo? Primero por mi cuenta de ESPN (SWID), luego por nombre.
     let mio = equipos.find((e) => swid && e.owners.includes(swid));
+    if (!mio && miId !== undefined && miId !== null) mio = equipos.find((e) => e.id === miId);
     if (!mio && miNombre) {
       const n = miNombre.toLowerCase();
       mio = equipos.find((e) => e.nombre.toLowerCase() === n) || equipos.find((e) => e.dueno.toLowerCase().startsWith(n));
@@ -68,7 +70,7 @@
     equipos.forEach((e) => e.espnIds.forEach((x) => enLiga.add(String(x))));
     Object.keys(jug).forEach((k) => { if (!enLiga.has(k) && (jug[k].own || 0) < 0.5) delete jug[k]; });
     return {
-      fecha: raw.fecha || new Date().toISOString(), semana, periodo: liga.status ? liga.status.currentMatchupPeriod : null,
+      fecha: raw.fecha || new Date().toISOString(), semana, ligaId: liga.id || null, temporada: liga.seasonId || null, periodo: liga.status ? liga.status.currentMatchupPeriod : null,
       liga: { nombre: (liga.settings || {}).name || "", equipos, calendario }, jugadores: jug,
     };
   }
@@ -154,7 +156,35 @@
     return "javascript:" + encodeURIComponent("(" + f.toString() + ")(" + (ligaId ? JSON.stringify(String(ligaId)) : "null") + "," + (destino ? JSON.stringify(destino) : "null") + ");void 0");
   }
 
-  global.EspnLocal = { leer, guardar, borrar, compactar, aplicar, codigoBoton };
+  // Lee la liga directo desde esta página (botón Actualizar). Funciona si la liga es pública,
+  // o si el navegador manda la sesión de ESPN (Chrome en computadora suele hacerlo).
+  // Si ESPN no deja, regresa un error con privada = true.
+  async function bajarLiga(ligaId, temporada) {
+    const hoy = new Date(), Y = temporada || (hoy.getMonth() >= 2 ? hoy.getFullYear() : hoy.getFullYear() - 1);
+    const base = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/" + Y + "/segments/0/leagues/" + ligaId;
+    async function pedir(url, headers) {
+      let ultimo = null;
+      for (const cred of ["include", "omit"]) {
+        try {
+          const r = await fetch(url, { credentials: cred, cache: "no-store", headers: headers || {} });
+          if (r.ok) return r.json();
+          ultimo = new Error("ESPN respondió " + r.status);
+          if (r.status === 401 || r.status === 403) ultimo.privada = true;
+        } catch (e) { ultimo = e; ultimo.privada = true; }
+      }
+      throw ultimo;
+    }
+    const liga = await pedir(base + "?view=mTeam&view=mRoster&view=mSettings&view=mMatchupScore");
+    if (!liga || !(liga.teams || []).length) { const e = new Error("ESPN no mandó equipos"); e.privada = true; throw e; }
+    const W = liga.scoringPeriodId;
+    const filtro = { players: { filterSlotIds: { value: [0, 2, 4, 6, 16, 17] }, limit: 1200, sortPercOwned: { sortPriority: 1, sortAsc: false } } };
+    let jugadores = null;
+    try { jugadores = await pedir(base + "?view=kona_player_info&scoringPeriodId=" + W, { "X-Fantasy-Filter": JSON.stringify(filtro) }); }
+    catch (e) { /* sigue solo con la liga */ }
+    return { fecha: new Date().toISOString(), semana: W, swid: "", liga, jugadores };
+  }
+
+  global.EspnLocal = { leer, guardar, borrar, compactar, aplicar, codigoBoton, bajarLiga };
   const c = leer();
   if (c && global.NFL_DATA) aplicar(global.NFL_DATA, c);
 })(window);

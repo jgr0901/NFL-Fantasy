@@ -210,3 +210,12 @@ ol.pasos li { margin-bottom: 6px; }
   .ocultar-movil { display: none; }
 }
 .kpi .v.malo { color: var(--rojo); }
+
+/* Botón Actualizar */
+.btn-act { margin-left: auto; align-self: center; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn-act .ico { display: inline-block; font-size: 16px; line-height: 1; }
+.btn-act.girando .ico { animation: girar 1s linear infinite; }
+.btn-act:disabled { opacity: .75; cursor: default; }
+@keyframes girar { to { transform: rotate(360deg); } }
+.aviso-flotante { position: fixed; left: 16px; right: 16px; bottom: 16px; z-index: 30; max-width: 560px; margin: 0 auto; text-align: center; border: 1px solid var(--borde); box-shadow: var(--sombra); line-height: 1.5; }
+@media (max-width: 600px) { .btn-act { padding: 8px 11px; } .btn-act .txt { display: none; } .btn-act .ico { font-size: 20px; } }

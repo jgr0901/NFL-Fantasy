@@ -11,6 +11,10 @@ Página para analizar tu equipo de fantasy football de ESPN: alineación recomen
 
 También puedes escribir tus jugadores a mano en **Mi equipo**.
 
+### Botón ⟳ Actualizar
+
+Arriba, junto al nombre. Vuelve a leer tu liga de ESPN directo (si ESPN lo permite: ligas públicas, o Chrome en computadora con tu sesión de ESPN) y trae el `data.js` más nuevo publicado. Si guardas una llave de GitHub (fine-grained, solo *Actions: Read and write* en este repositorio) en **Liga y datos**, el botón además corre `actualizar.yml` en ese momento y espera a que se publiquen los datos. La llave solo se guarda en ese navegador.
+
 Puedes **crear una cuenta** (correo y contraseña) en *Liga y datos*: tu roster, liga, seguimientos y trades se guardan en tu cuenta y se sincronizan en vivo entre tu computadora y tu teléfono. Sin cuenta, todo se queda en tu navegador. Cada cuenta solo puede ver sus propios datos.
 
 Las cuentas viven en Supabase (tabla `nfl_estado`, con reglas RLS por usuario). La configuración está en `config_cuentas.js`; la librería está en `vendor/`.
