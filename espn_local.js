@@ -50,7 +50,14 @@
         else if (FLEX[id]) flexes.push({ nombre: FLEX_NOMBRE[id], pos: FLEX[id], n });
       });
       out.slots = slots; out.flexes = flexes; out.banca = +(cnt[20] || 0);
+      // Límites del roster: en ESPN los lugares de IR (21) no cuentan contra el máximo del roster
+      out.ir = +(cnt[21] || 0);
+      out.rosterMax = Object.entries(cnt).reduce((t, [id, n]) => t + (+id === 21 ? 0 : +n || 0), 0);
     }
+    // Máximo de jugadores por posición en el roster (0 = sin límite)
+    const lim = {};
+    Object.entries(rs.positionLimits || {}).forEach(([id, n]) => { if (POS[id] && +n > 0) lim[POS[id]] = +n; });
+    if (Object.keys(lim).length) out.limitesPos = lim;
     // Semanas: temporada regular y playoffs de fantasy
     const reg = sch.matchupPeriodCount || null;
     const periodos = {};
@@ -115,12 +122,13 @@
     (liga.members || []).forEach((m) => (miembros[m.id] = ((m.firstName || "") + " " + (m.lastName || "")).trim() || m.displayName || ""));
     const swid = (raw.swid || "").toUpperCase();
     const equipos = (liga.teams || []).map((t) => {
-      const ids = [], tit = [];
+      const ids = [], tit = [], ir = [];
       ((t.roster || {}).entries || []).forEach((en) => {
         const p = (en.playerPoolEntry || {}).player || {};
         const id = p.id !== undefined ? p.id : en.playerId;
         if (id === undefined) return;
         ids.push(id);
+        if (en.lineupSlotId === 21) ir.push(id); // en la lista de lesionados (IR)
         if (en.lineupSlotId !== undefined && en.lineupSlotId !== 20 && en.lineupSlotId !== 21) tit.push(id); // 20 banca, 21 IR
         if (!jug[id] && p.id !== undefined) jug[id] = datosJugador(p, semana);
       });
@@ -129,7 +137,7 @@
       const dueno = (t.owners && miembros[t.owners[0]]) || "";
       const o = (t.record && t.record.overall) || {};
       const tc = t.transactionCounter || {};
-      return { id: t.id, nombre, abrev: t.abbrev || "", dueno, owners, espnIds: ids, espnTit: tit,
+      return { id: t.id, nombre, abrev: t.abbrev || "", dueno, owners, espnIds: ids, espnTit: tit, espnIR: ir,
         record: o.wins !== undefined ? o.wins + "-" + o.losses + (o.ties ? "-" + o.ties : "") : "",
         w: o.wins || 0, l: o.losses || 0, t: o.ties || 0, pf: o.pointsFor || t.points || 0, pa: o.pointsAgainst || 0,
         faabGastado: tc.acquisitionBudgetSpent || 0, logo: t.logo || "" };
@@ -189,6 +197,7 @@
       equipos: c.liga.equipos.map((eq) => Object.assign({}, eq, {
         jugadores: eq.espnIds.map((x) => aId[x]).filter(Boolean),
         titulares: eq.espnTit && eq.espnTit.length ? eq.espnTit.map((x) => aId[x]).filter(Boolean) : null,
+        ir: eq.espnIR ? eq.espnIR.map((x) => aId[x]).filter(Boolean) : null, // null = liga leída antes de guardar el IR
       })),
     };
     D.fuenteEspn = true;
