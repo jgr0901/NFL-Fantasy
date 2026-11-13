@@ -8,6 +8,8 @@
   M.recalcular();
 
   // ---------------- Utilidades ----------------
+  // Recarga la página mostrando la pantalla de carga
+  const recargarPagina = (texto, ms) => { if (window.Carga) Carga.mostrar(texto || "Cargando…"); setTimeout(() => location.reload(), ms || 0); };
   const $ = (s, el) => (el || document).querySelector(s);
   const f1 = (x) => (x === null || x === undefined || isNaN(x) ? "–" : (Math.round(x * 10) / 10).toFixed(1));
   const f2 = (x) => (x === null || x === undefined || isNaN(x) ? "–" : (Math.round(x * 100) / 100).toFixed(2));
@@ -313,11 +315,20 @@
     });
     return n;
   }
+  // Lo que llega en vivo (ESPN, clima) se junta y se recalcula una sola vez, sin trabar la pantalla
+  let timerRecalculo = null;
+  function programarRecalculo() {
+    clearTimeout(timerRecalculo);
+    timerRecalculo = setTimeout(() => {
+      const hacer = () => { recalcularTodo(); pintarSubtitulo(); repintar(); };
+      if (window.requestIdleCallback) requestIdleCallback(hacer, { timeout: 1500 }); else hacer();
+    }, 400);
+  }
   function cargarEnVivo() {
     if (!EL) return;
     // 1) ESPN al momento (lesiones y proyecciones), 2) clima de la semana, 3) tendencias de Sleeper
     EL.espnJugadores(D.temporada, SEM).then((mapa) => {
-      if (aplicarEspnVivo(mapa) > 100) { espnVivo = true; D.fuenteEspn = true; recalcularTodo(); pintarSubtitulo(); repintar(); }
+      if (aplicarEspnVivo(mapa) > 100) { espnVivo = true; D.fuenteEspn = true; programarRecalculo(); }
     }).catch((e) => console.warn("ESPN al momento:", e.message));
     cargarClima(SEM);
     EL.tendencias().then((t) => { sleeper = t; if (actual === "objetivos" || actual === "jugadores") repintar(); }).catch(() => {});
@@ -332,7 +343,7 @@
       const ids = Object.keys(c);
       if (!ids.length) return;
       ids.forEach((id) => M.ponerClima(id, c[id]));
-      recalcularTodo(); repintar();
+      programarRecalculo();
     }).catch(() => {});
   }
   function climaTexto(g) {
@@ -1579,7 +1590,7 @@
         aplicarLigaEspn(e.data.datos).then((c) => {
           aviso.textContent = "Liga actualizada: " + c.liga.equipos.length + " equipos. Cargando…";
           history.replaceState(null, "", location.pathname);
-          setTimeout(() => location.reload(), 700);
+          recargarPagina("Aplicando tu liga…", 700);
         });
       } catch (err) { aviso.textContent = "No pude leer tu liga: " + err.message; }
     });
@@ -1704,7 +1715,7 @@
         try { await Promise.all(["data.js", "historial.js"].map((f) => fetch(f, { cache: "reload" }))); } catch (e) { /* recarga normal */ }
         decir(notas.join("<br>") + "<br>Recargando…");
         await esperar(notas.some((n) => n.startsWith("⚠️")) ? 4000 : 1200);
-        location.reload();
+        recargarPagina("Cargando estadísticas nuevas…");
         return;
       }
       decir(notas.join("<br>") + '<br><button class="sec" type="button" style="margin-top:8px">Cerrar</button>');
@@ -1747,7 +1758,7 @@
           SY.guardar();
           if (d.espn) await SY.guardarEspn(d.espn); else await SY.borrarEspn();
           $("#msgRespaldo").textContent = "Respaldo cargado. Recargando…";
-          setTimeout(() => location.reload(), 900);
+          recargarPagina("Cargando…", 900);
         } catch (err) { $("#msgRespaldo").innerHTML = '<span class="malo">No pude leer ese archivo: ' + esc(err.message) + "</span>"; }
       };
       r.readAsText(f);
@@ -1767,14 +1778,14 @@
           $("#msgEspn").textContent = "Guardando tu liga…";
           aplicarLigaEspn(raw).then((c) => {
             $("#msgEspn").textContent = "Liga cargada: " + c.liga.equipos.length + " equipos. Recargando…";
-            setTimeout(() => location.reload(), 900);
+            recargarPagina("Cargando…", 900);
           }, () => { $("#msgEspn").innerHTML = '<span class="malo">Se guardó en este dispositivo pero no en la nube. Intenta de nuevo.</span>'; });
         } catch (e) { $("#msgEspn").innerHTML = '<span class="malo">No pude leer ese archivo: ' + esc(e.message) + "</span>"; }
       };
       r.readAsText(f);
     };
     const d = $("#desconectarEspn");
-    if (d) d.onclick = () => { SY.borrarEspn().then(() => location.reload()); };
+    if (d) d.onclick = () => { SY.borrarEspn().then(() => recargarPagina()); };
   }
 
   // Cuenta: iniciar sesión para sincronizar entre dispositivos
@@ -1845,7 +1856,7 @@
   SY.alCambiar((que) => {
     if (que === "modo" || que === "usuario") pintarSync();
     if (que === "estado") { cargarRoster(); recalcularTodo(); repintar(); }
-    if (que === "espn") location.reload();
+    if (que === "espn") recargarPagina("Llegó tu liga más reciente, actualizando…");
   });
   // Alto del encabezado (para que el encabezado de las tablas se quede fijo al bajar)
   const medirTop = () => document.documentElement.style.setProperty("--alto-top", ($(".top").getBoundingClientRect().height || 0) + "px");
@@ -1857,6 +1868,12 @@
 
   // Inicio
   abrir(actual);
-  setTimeout(cargarEnVivo, 50);
+  if (window.Carga) Carga.listo();
+  // Lo que se trae de internet empieza ya que la pantalla está pintada
+  setTimeout(cargarEnVivo, 250);
+  // Guarda una copia de la app para abrirla rápido aunque la conexión esté lenta (solo en la web)
+  if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol) && !window.claude) {
+    window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+  }
   document.addEventListener("visibilitychange", () => { if (!document.hidden && vivo) revisarVivo(); });
 })();

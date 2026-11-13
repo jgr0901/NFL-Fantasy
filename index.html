@@ -11,11 +11,62 @@
   <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="styles.css?v=20261106b">
+  <link rel="preload" href="data.js" as="script">
+  <link rel="preload" href="app.js?v=20261109a" as="script">
+  <style>
+    /* Pantalla de carga: se ve al instante, antes de que bajen los datos */
+    #carga { position: fixed; inset: 0; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+      background: radial-gradient(circle at 50% 38%, #0d5ba6 0%, #094782 45%, #062e55 100%); color: #fff; font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      transition: opacity .35s ease, visibility .35s; padding: 24px; text-align: center; }
+    #carga.fuera { opacity: 0; visibility: hidden; pointer-events: none; }
+    #carga .c-escudo { position: relative; width: 132px; height: 132px; display: grid; place-items: center; }
+    #carga .c-escudo img { width: 92px; height: 92px; background: #fff; border-radius: 22px; padding: 6px; box-shadow: 0 8px 28px rgba(0,0,0,.35); animation: c-late 1.6s ease-in-out infinite; }
+    #carga .c-aro { position: absolute; inset: 0; border-radius: 50%; border: 4px solid rgba(255,255,255,.18); border-top-color: #fff; border-right-color: #ff5a63; animation: c-gira 1s linear infinite; }
+    #carga h2 { margin: 0; color: #fff; font-size: 22px; font-weight: 800; letter-spacing: .06em; }
+    #carga h2 span { color: #ff8a90; }
+    #carga .c-txt, #carga .c-btn { font-family: inherit; }
+    #carga .c-txt { min-height: 1.4em; opacity: .9; }
+    #carga .c-barra { width: min(240px, 70vw); height: 5px; border-radius: 3px; background: rgba(255,255,255,.18); overflow: hidden; }
+    #carga .c-barra i { display: block; height: 100%; width: 8%; border-radius: 3px; background: linear-gradient(90deg, #fff, #ff8a90); transition: width .4s ease; }
+    #carga .c-btn { display: none; margin-top: 4px; padding: 10px 22px; border: 0; border-radius: 999px; background: #fff; color: #094782; font: inherit; font-weight: 700; cursor: pointer; }
+    #carga.lento .c-btn, #carga.error .c-btn { display: inline-block; }
+    #carga.error .c-aro { animation: none; border-color: #ff8a90; }
+    @keyframes c-gira { to { transform: rotate(360deg); } }
+    @keyframes c-late { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+    @media (prefers-reduced-motion: reduce) { #carga .c-aro, #carga .c-escudo img { animation-duration: 3s; } }
+    @media (prefers-color-scheme: dark) { #carga { background: radial-gradient(circle at 50% 38%, #12305a 0%, #0b1a33 55%, #060c18 100%); } }
+  </style>
 </head>
 <body>
+  <div id="carga" role="status" aria-live="polite">
+    <div class="c-escudo"><div class="c-aro"></div><img src="img/escudo-128.png" alt="" width="92" height="92"></div>
+    <h2>NFL <span>FANTASY</span></h2>
+    <div class="c-barra"><i id="cargaBarra"></i></div>
+    <div class="c-txt" id="cargaTxt">Descargando estadísticas…</div>
+    <button class="c-btn" type="button" onclick="location.reload()">Reintentar</button>
+  </div>
+  <script>
+    // Avance de la pantalla de carga; app.js llama Carga.listo() cuando ya pintó.
+    (function () {
+      var el = document.getElementById("carga"), txt = document.getElementById("cargaTxt"), barra = document.getElementById("cargaBarra"), hecho = false;
+      var lento = setTimeout(function () { if (!hecho) { el.classList.add("lento"); txt.textContent = "Está tardando más de lo normal (conexión lenta). Puedes esperar o reintentar."; } }, 15000);
+      window.Carga = {
+        paso: function (t, p) { if (hecho) return; if (t) txt.textContent = t; if (p) barra.style.width = p + "%"; },
+        listo: function () { if (hecho) return; hecho = true; clearTimeout(lento); barra.style.width = "100%"; requestAnimationFrame(function () { setTimeout(function () { el.classList.add("fuera"); }, 120); }); },
+        mostrar: function (t) { hecho = false; el.className = ""; barra.style.width = "30%"; txt.textContent = t || "Cargando…"; },
+        error: function () { if (hecho) return; clearTimeout(lento); el.classList.add("error"); txt.textContent = "No se pudo abrir la app. Revisa tu conexión y reintenta."; }
+      };
+      // Falla al bajar uno de los archivos de la app, o un error al arrancarla
+      window.addEventListener("error", function (e) {
+        if (hecho) return;
+        var t = e.target;
+        if ((t && t.tagName === "SCRIPT") || (t === window && /\.js(\?|$)/.test(e.filename || "") && e.filename.indexOf(location.origin) === 0)) window.Carga.error();
+      }, true);
+    })();
+  </script>
   <header class="top">
     <div class="marca">
-      <img class="logo-img" src="img/escudo.png" alt="">
+      <img class="logo-img" src="img/escudo-128.png" alt="">
       <div>
         <h1><span class="t-nfl">NFL</span> <span class="t-fan">FANTASY</span></h1>
         <p id="subtitulo" class="sub"></p><p id="subCorto" class="sub"></p>
@@ -52,14 +103,14 @@
 
   <datalist id="listaJugadores"></datalist>
 
-  <script src="data.js"></script>
-  <script src="historial.js"></script>
+  <script src="data.js" onload="Carga.paso('Descargando historial…', 40)"></script>
+  <script src="historial.js" onload="Carga.paso('Preparando tu liga…', 60)"></script>
   <script src="espn_local.js?v=20261106b"></script>
   <script src="vendor/supabase.js?v=20261106b"></script>
   <script src="config_cuentas.js?v=20261106b"></script>
   <script src="sync.js?v=20261106b"></script>
-  <script src="modelo.js?v=20261106b"></script>
+  <script src="modelo.js?v=20261106b" onload="Carga.paso('Calculando proyecciones…', 80)"></script>
   <script src="en_linea.js?v=20261106b"></script>
-  <script src="app.js?v=20261106b"></script>
+  <script src="app.js?v=20261109a"></script>
 </body>
 </html>
