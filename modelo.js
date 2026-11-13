@@ -623,12 +623,33 @@
 
   // ---------------- Alineación y trades ----------------
   // fnPts (opcional): otra forma de dar los puntos de cada jugador, p. ej. sus puntos reales
-  function alineacion(ids, w, fnPts) {
-    const ps = ids.filter((id) => porId[id]).map((id) => {
-      if (fnPts) return { id, pos: porId[id].pos, pts: fnPts(id) };
+  // opc (opcional): para la semana en curso, cuando ya empezaron algunos partidos
+  //   opc.enJuego(id) -> null si su partido no ha empezado; si ya empezó, { pts: los que lleva, restante: 0–1 del partido que falta }
+  //   opc.titulares: quiénes están alineados en ESPN. Si su partido ya empezó, los titulares se quedan
+  //   (no se pueden sacar) y los de la banca ya no pueden entrar. Sin titulares, se elige libremente.
+  function alineacion(ids, w, fnPts, opc) {
+    const enJuego = opc && opc.enJuego;
+    const tit = opc && opc.titulares ? new Set(opc.titulares) : null;
+    const fuera = []; // banca con su partido ya empezado: no pueden entrar
+    const ps = [];
+    ids.filter((id) => porId[id]).forEach((id) => {
+      if (fnPts) { ps.push({ id, pos: porId[id].pos, pts: fnPts(id) }); return; }
       const pr = proyectarSemana(porId[id], w);
-      return { id, pos: porId[id].pos, pts: pr.pts, pr };
-    }).sort((a, b) => b.pts - a.pts);
+      const x = { id, pos: porId[id].pos, pts: pr.pts, pr };
+      const e = enJuego ? enJuego(id) : null;
+      if (e) {
+        // Lo que ya hizo más su proyección para lo que falta del partido
+        x.jugado = e; x.real = e.pts; x.restante = e.restante; x.proy = pr.pts;
+        x.pts = e.pts + pr.pts * e.restante;
+        if (tit) {
+          if (tit.has(id)) x.fijo = true;
+          else { x.bloqueado = true; fuera.push(x); return; }
+        }
+      }
+      ps.push(x);
+    });
+    // Los titulares fijos van primero para que ocupen su puesto aunque otro proyecte más
+    ps.sort((a, b) => (b.fijo ? 1 : 0) - (a.fijo ? 1 : 0) || b.pts - a.pts);
     const libres = ps.slice(), titulares = [];
     const tomar = (pred, k, slot) => {
       for (let i = 0; i < k; i++) {
@@ -642,7 +663,9 @@
     cfg.flexes.slice().sort((a, b) => a.pos.length - b.pos.length).forEach((fx) => tomar((x) => fx.pos.includes(x.pos), fx.n, fx.nombre));
     tomar((x) => x.pos === "DST", cfg.slots.DST || 0, "D/ST");
     tomar((x) => x.pos === "K", cfg.slots.K || 0, "K");
-    return { titulares, banca: libres, pts: sum(titulares.map((x) => x.pts)) };
+    const banca = libres.concat(fuera).sort((a, b) => b.pts - a.pts);
+    const yaHechos = sum(titulares.filter((x) => x.jugado).map((x) => x.real));
+    return { titulares, banca, pts: sum(titulares.map((x) => x.pts)), yaHechos, conPartidos: titulares.some((x) => x.jugado && !x.jugado.sinDatos) };
   }
   const ULTIMA_FANTASY = Math.max(...cfg.playoffs);
   function puntosRestoTemporada(ids, hasta) {
@@ -776,9 +799,10 @@
       let mu = 0, v = 0;
       semanas.forEach((w) => {
         if (w > SEMANAS) return;
-        const al = alineacion(e.jugadores, w);
+        const ej = liga.enJuego && liga.enJuego.w === w ? { enJuego: liga.enJuego.fn, titulares: e.titulares || null } : null;
+        const al = alineacion(e.jugadores, w, null, ej);
         mu += al.pts;
-        v += sum(al.titulares.filter((t) => t.id).map((t) => { const f = porId[t.id].fila; const d = t.pr && t.pr.disp ? t.pr.disp.f : 1; return ((f ? f.sd : 6) * d) ** 2; }));
+        v += sum(al.titulares.filter((t) => t.id).map((t) => { const f = porId[t.id].fila; const d = t.pr && t.pr.disp ? t.pr.disp.f : 1; return ((f ? f.sd : 6) * d) ** 2 * (t.restante !== undefined ? t.restante : 1); }));
       });
       return (proyCache[k] = { mu, sd: Math.sqrt(v + 1) });
     };

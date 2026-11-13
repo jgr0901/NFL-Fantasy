@@ -249,10 +249,48 @@
 
   // ---------------- Cálculos compartidos (se guardan hasta que algo cambie) ----------------
   let cache = {};
-  function invalidar() { cache = {}; }
+  function invalidar() { cache = {}; Object.keys(conStats).forEach((k) => delete conStats[k]); }
   function recalcularTodo() { M.recalcular(); invalidar(); }
   function varianza(al) {
-    return M.sum(al.titulares.filter((t) => t.id).map((t) => { const f = M.porId[t.id].fila; const d = (t.pr && t.pr.disp ? t.pr.disp.f : 1); return (f.sd * d) ** 2; }));
+    return M.sum(al.titulares.filter((t) => t.id).map((t) => { const f = M.porId[t.id].fila; const d = (t.pr && t.pr.disp ? t.pr.disp.f : 1); return (f.sd * d) ** 2 * (t.restante !== undefined ? t.restante : 1); }));
+  }
+  // ---------------- Partidos ya empezados de la semana en curso ----------------
+  // Si el partido de un jugador ya empezó: sus puntos reales (lo que lleva) y qué parte del partido falta.
+  // Viene del marcador en vivo de ESPN; si no está, de las estadísticas de data.js.
+  const conStats = {};
+  function equipoConStats(t, w) {
+    const k = t + "|" + w;
+    if (conStats[k] === undefined) conStats[k] = M.tabla.some((f) => f.j.t === t && f.j.pos !== "DST" && f.reales.some((r) => r.w === w));
+    return conStats[k];
+  }
+  function estadoJugador(j, w) {
+    if (!j || w !== SEM) return null;
+    if (vivo && vivo.semana === w) {
+      const pv = puntosVivo(j);
+      if (pv) return pv.g.estado === "pre" ? null : { pts: pv.pts, restante: pv.restante, g: pv.g, final: pv.g.estado === "post" };
+    }
+    const g = M.partidoDe[j.t + "|" + w];
+    if (!g) return null;
+    const ini = EL ? EL.inicioUTC(g) : null;
+    if (!g.jugado && !(ini && ini.getTime() <= Date.now())) return null;
+    const r = j.fila && j.fila.reales.find((x) => x.w === w);
+    if (r) return { pts: r.pts, restante: 0, g, final: true };
+    // Ya se jugó y su equipo tiene estadísticas, pero él no: no jugó
+    if (g.jugado && (j.pos === "DST" || equipoConStats(j.t, w))) return { pts: 0, restante: 0, g, final: true };
+    // Ya empezó pero todavía no hay datos: se queda bloqueado con su proyección
+    return { pts: 0, restante: 1, g, sinDatos: true };
+  }
+  const enJuego = (id) => estadoJugador(M.porId[id], SEM);
+  // Titulares de ESPN de un equipo de la liga (solo si son de la semana en curso)
+  function titularesDe(e) {
+    if (!e || !D.liga || D.liga.semana !== SEM) return null;
+    if (e.mio) return titularesEspn();
+    return e.titulares ? e.titulares.filter((id) => M.porId[id]) : null;
+  }
+  // Alineación de una semana; en la semana en curso toma en cuenta los partidos que ya empezaron
+  function alin(ids, w, equipo) {
+    if (w !== SEM) return M.alineacion(ids, w);
+    return M.alineacion(ids, w, null, { enJuego, titulares: titularesDe(equipo) });
   }
   function rivalDe(w) {
     if (!D.liga || !ligaMia) return null;
@@ -268,9 +306,9 @@
     return w;
   }
   function enfrentamiento(w, rival) {
-    const mi = M.alineacion(roster, w);
+    const mi = alin(roster, w, ligaMia);
     if (!rival) return { mi, su: null, p: null };
-    const su = M.alineacion(rival.jugadores, w);
+    const su = alin(rival.jugadores, w, rival);
     const p = M.phi((mi.pts - su.pts) / Math.sqrt(varianza(mi) + varianza(su) + 1));
     return { mi, su, p };
   }
@@ -279,7 +317,8 @@
     if (!D.liga || !D.liga.equipos || !(D.liga.calendario || []).length) return (cache.sim = null);
     const cfgL = D.liga.cfg || {};
     const liga = {
-      equipos: D.liga.equipos.map((e) => ({ id: e.id, jugadores: e.mio ? roster : e.jugadores, w: e.w || 0, pf: e.pf || 0 })),
+      equipos: D.liga.equipos.map((e) => ({ id: e.id, jugadores: e.mio ? roster : e.jugadores, titulares: titularesDe(e), w: e.w || 0, pf: e.pf || 0 })),
+      enJuego: { w: SEM, fn: enJuego },
       calendario: D.liga.calendario, periodos: cfgL.periodos || null,
       lugaresPlayoff: cfgL.lugaresPlayoff || 4, periodoActual: D.liga.periodo || 1,
     };
@@ -356,10 +395,19 @@
     if (!EL) return;
     const hoy = new Date().getDay(); // los partidos son jue, dom, lun (y a veces sáb/vie)
     const hayPartidosCerca = M.partidos.some((g) => { if (g.jugado && g.w < SEM - 1) return false; const ini = EL.inicioUTC(g); return ini && Math.abs(ini - Date.now()) < 6 * 3600000; });
-    if (!hayPartidosCerca && ![0, 1, 4].includes(hoy)) return;
+    // También si ya empezó algún partido de esta semana (p. ej. el del jueves visto el sábado)
+    const yaEmpezo = M.partidos.some((g) => { if (g.w !== SEM) return false; const ini = EL.inicioUTC(g); return g.jugado || (ini && ini <= Date.now()); });
+    if (!hayPartidosCerca && !yaEmpezo && ![0, 1, 4].includes(hoy)) return;
     EL.enVivo(D.temporada, null).then((v) => {
+      const firma = (x) => x ? JSON.stringify(x.juegos.map((g) => [g.id, g.estado, g.home.pts, g.away.pts])) + Object.keys(x.porEid).length : "";
+      const cambio = firma(v) !== firma(vivo);
       vivo = v;
-      if (actual === "equipo") pintarVivo();
+      // Los puntos reales cambian la proyección de la semana: se vuelve a calcular
+      if (cambio && v.semana === SEM && v.juegos.some((g) => g.estado !== "pre")) {
+        invalidar();
+        const ocupado = document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
+        if (actual === "equipo" && !ocupado) repintar(); else if (actual === "equipo") pintarVivo();
+      } else if (actual === "equipo") pintarVivo();
       clearTimeout(timerVivo);
       if (v.juegos.some((g) => g.estado === "in")) timerVivo = setTimeout(revisarVivo, 60000);
     }).catch((e) => console.warn("En vivo:", e.message));
@@ -392,14 +440,14 @@
     // Semana de los marcadores
     const w = M.partidos.find((g) => vivo.juegos.some((v) => (v.home.t === g.home && v.away.t === g.away)) && Math.abs(new Date(g.fecha) - new Date(vivo.juegos[0].fecha)) < 6 * 86400000);
     const semana = vivo.semana || (w ? w.w : SEM);
-    const calc = (ids) => {
-      const al = M.alineacion(ids, semana);
+    const calc = (ids, equipo) => {
+      const al = alin(ids, semana, equipo);
       let real = 0, final = 0, varR = 0;
       const filas = al.titulares.map((t) => {
         if (!t.id) return { t, pv: null };
         const j = M.porId[t.id], pv = puntosVivo(j);
         const r = pv ? pv.restante : 1;
-        const proy = t.pts || 0;
+        const proy = t.proy !== undefined ? t.proy : t.pts || 0;
         const fin = (pv ? pv.pts : 0) + proy * r;
         real += pv ? pv.pts : 0; final += fin;
         varR += ((j.fila ? j.fila.sd : 5) ** 2) * r;
@@ -407,9 +455,9 @@
       });
       return { filas, real, final, varR };
     };
-    const yo = calc(roster);
+    const yo = calc(roster, ligaMia);
     const rival = rivalDe(semana);
-    const el2 = rival ? calc(rival.jugadores) : null;
+    const el2 = rival ? calc(rival.jugadores, rival) : null;
     const p = el2 ? M.phi((yo.final - el2.final) / Math.sqrt(yo.varR + el2.varR + 1)) : null;
     const fila = (x) => {
       if (!x.j) return `<tr><td><b>${x.t.slot}</b></td><td class="malo" colspan="3">vacío</td></tr>`;
@@ -418,7 +466,7 @@
       return `<tr class="clic" data-j="${x.j.id}"><td><b>${x.t.slot}</b></td><td>${esc(x.j.n)} <span class="nota">${esc(x.j.t)}</span><div class="nota">${est}</div></td>
         <td class="n grande">${f1(x.pv ? x.pv.pts : 0)}</td><td class="n nota">${f1(x.fin)}</td></tr>`;
     };
-    el.innerHTML = `<div class="panel bloque vivo">${titulo(`<span class="punto-vivo"></span> En vivo · semana ${semana}`, "Puntos reales de tu alineación recomendada mientras se juegan los partidos (ESPN), con el puntaje de tu liga. 'Final' estima cómo terminará cada uno: lo que lleva más su proyección para el tiempo que falta. Se actualiza cada minuto.", `<span class="nota">actualizado ${new Date(vivo.hora).toLocaleTimeString("es-MX", { hour: "numeric", minute: "2-digit" })}</span>`)}
+    el.innerHTML = `<div class="panel bloque vivo">${titulo(`<span class="punto-vivo"></span> En vivo · semana ${semana}`, "Puntos reales de tu alineación mientras se juegan los partidos (ESPN), con el puntaje de tu liga. Los que ya jugaron se quedan donde los tenías en ESPN. 'Final' estima cómo terminará cada uno: lo que lleva más su proyección para el tiempo que falta. Se actualiza cada minuto.", `<span class="nota">actualizado ${new Date(vivo.hora).toLocaleTimeString("es-MX", { hour: "numeric", minute: "2-digit" })}</span>`)}
       <div class="marcador grande-m">
         <div class="eq">${esc(ligaMia ? ligaMia.nombre : "Tu alineación")}</div><div class="pt">${f1(yo.real)} <span class="nota">→ ${f0(yo.final)}</span></div>
         ${el2 ? `<div class="eq">${esc(rival.nombre)}</div><div class="pt">${f1(el2.real)} <span class="nota">→ ${f0(el2.final)}</span></div>` : ""}
@@ -426,7 +474,7 @@
       ${p !== null ? `<div class="prob"><i class="h" style="width:${p * 100}%"></i><i class="a" style="width:${(1 - p) * 100}%"></i></div><div class="fila entre mini"><span>Tú ${pct(p)}</span><span>${esc(rival.abrev || rival.nombre)} ${pct(1 - p)}</span></div>` : ""}
       <details class="detalles" open><summary>Tus jugadores</summary><table class="mini"><thead><tr><th>Puesto</th><th>Jugador</th><th class="n">Lleva</th><th class="n">Final</th></tr></thead><tbody>${yo.filas.map(fila).join("")}</tbody></table></details>
       ${el2 ? `<details class="detalles"><summary>Jugadores de ${esc(rival.nombre)}</summary><table class="mini"><tbody>${el2.filas.map(fila).join("")}</tbody></table></details>` : ""}
-      <p class="nota">Usa tu alineación recomendada; si alineaste distinto en ESPN, tus puntos reales pueden variar.</p></div>`;
+      <p class="nota">${titularesDe(ligaMia) ? "Los que ya jugaron cuentan como los alineaste en ESPN; los que faltan, con la alineación recomendada." : "Usa tu alineación recomendada; si alineaste distinto en ESPN, tus puntos reales pueden variar."}</p></div>`;
     conectarClics(el);
   }
 
@@ -445,7 +493,7 @@
     // Proyección por semana con rango
     const resto = []; let totalResto = 0;
     for (let w = SEM; w <= ULTIMA; w++) {
-      const a = M.alineacion(roster, w), sd = Math.sqrt(varianza(a));
+      const a = w === semEquipo ? al : alin(roster, w, ligaMia), sd = Math.sqrt(varianza(a));
       totalResto += a.pts;
       const byes = roster.filter((id) => M.byes[M.porId[id].t] === w && M.porId[id].pos !== "DST").length;
       resto.push({ x: "S" + w, y: a.pts, lo: Math.max(0, a.pts - M.RANGO * sd), hi: a.pts + M.RANGO * sd, tipo: "proy", playoff: PLAYOFFS.includes(w),
@@ -456,11 +504,12 @@
     const alerta = (tipo, ico, html, id) => `<li class="al-${tipo} ${id ? "clic" : ""}" ${id ? `data-j="${id}"` : ""}><span class="al-ico" aria-hidden="true">${ico}</span><span>${html}</span></li>`;
     if (roster.length) al.titulares.forEach((t) => {
       if (!t.id) { alertas.push(alerta("rojo", "➕", `<b>${t.slot}</b>: no tienes a nadie para este puesto. Busca en <a href="#" data-ir="objetivos">Mercado</a>.`)); return; }
+      if (t.jugado) return; // ya jugó o está jugando: no hay nada que hacer
       const d = t.pr.disp, n = esc(M.porId[t.id].n);
       if (t.pr.bye) alertas.push(alerta("amar", "💤", `<b>${n}</b> descansa (bye) esta semana.`, t.id));
       else if (d && d.f < 1 && d.nota) alertas.push(alerta(d.f < 0.5 ? "rojo" : "amar", "🚑", `<b>${n}</b>: ${esc(d.nota)}.${d.f < 0.5 ? " Ten listo a un suplente." : ""}`, t.id));
     });
-    al.banca.forEach((b) => { const d = b.pr.disp; if (d && d.f === 0 && d.nota && !b.pr.bye && /Fuera|IR|lesionados/.test(d.nota)) alertas.push(alerta("gris", "🩹", `${esc(M.porId[b.id].n)} (banca): ${esc(d.nota)}.`, b.id)); });
+    al.banca.forEach((b) => { if (b.jugado) return; const d = b.pr.disp; if (d && d.f === 0 && d.nota && !b.pr.bye && /Fuera|IR|lesionados/.test(d.nota)) alertas.push(alerta("gris", "🩹", `${esc(M.porId[b.id].n)} (banca): ${esc(d.nota)}.`, b.id)); });
     const sim = simulacion();
     const rank = rankingRosters();
     const miRank = rank && ligaMia ? rank.find((f) => f.e.mio) : null;
@@ -476,6 +525,7 @@
       if (!x.id) return `<tr><td><span class="slot">${x.slot}</span></td><td colspan="6" class="malo">Sin jugador para este puesto</td></tr>`;
       const j = M.porId[x.id], pr = x.pr;
       const g = pr.g;
+      if (x.jugado) return filaJugado(x, j, banca);
       return `<tr class="clic" data-j="${j.id}">
         <td><span class="slot ${banca ? "bn" : ""}">${banca ? "BN" : x.slot}</span></td>
         <td>${jugHTML(j)}<div class="solo-movil mt-al">${rivalHTML(j, pr)} ${pr.bye ? "" : estadoTag(pr)}</div></td>
@@ -484,6 +534,23 @@
         <td class="n ocultar-movil">${pr.espn !== null && pr.espn !== undefined ? f1(pr.espn) : "–"}</td>
         <td class="n ocultar-movil">${pr.bye || !pr.pts ? "–" : f0(piso(x)) + "–" + f0(techo(x))}</td>
         <td class="ocultar-movil">${estadoTag(pr)}</td>
+        <td>${ligaMia ? "" : `<button class="x" data-quitar="${j.id}" title="Quitar de mi equipo">×</button>`}</td></tr>`;
+    };
+    // Jugadores cuyo partido ya empezó: se muestran sus puntos reales y quedan bloqueados
+    const filaJugado = (x, j, banca) => {
+      const e = x.jugado, pr = x.pr;
+      const est = e.final ? "Final" : e.sinDatos ? "Ya empezó" : esc((e.g && e.g.detalle) || "En juego");
+      const candado = x.fijo ? "Titular en ESPN: ya no se puede sacar" : x.bloqueado ? "En la banca: su partido ya empezó, ya no puede entrar" : "Su partido ya empezó";
+      const tag = `<span class="tag ${e.final ? "gris" : "verde"}" title="${candado}">🔒 ${est}</span>`;
+      const valor = e.sinDatos ? `${f1(x.pts)}<div class="nota">proy</div>` : e.final ? `${f1(x.real)}<div class="nota">reales</div>` : `${f1(x.real)}<div class="nota">→ ${f1(x.pts)}</div>`;
+      return `<tr class="clic jugado" data-j="${j.id}">
+        <td><span class="slot ${banca ? "bn" : ""}">${banca ? "BN" : x.slot}</span></td>
+        <td>${jugHTML(j)}<div class="solo-movil mt-al">${rivalHTML(j, pr)} ${tag}</div></td>
+        <td class="ocultar-movil">${rivalHTML(j, pr)}</td>
+        <td class="n grande">${valor}</td>
+        <td class="n ocultar-movil">${pr.espn !== null && pr.espn !== undefined ? f1(pr.espn) : "–"}</td>
+        <td class="n ocultar-movil">${e.final ? "–" : "proy " + f1(x.proy)}</td>
+        <td class="ocultar-movil">${tag}</td>
         <td>${ligaMia ? "" : `<button class="x" data-quitar="${j.id}" title="Quitar de mi equipo">×</button>`}</td></tr>`;
     };
     // Fuerza por posición: tu titular vs. el titular promedio de la liga
@@ -511,9 +578,9 @@
     let hero;
     if (rival && enf.su) {
       const p = enf.p;
-      const filaR = (t) => t.id ? `<tr class="clic" data-j="${t.id}"><td><b>${t.slot}</b></td><td>${esc(M.porId[t.id].n)} <span class="nota">${esc(M.porId[t.id].t)}</span></td><td class="n">${f1(t.pts)}</td></tr>` : `<tr><td><b>${t.slot}</b></td><td class="malo">vacío</td><td class="n">0</td></tr>`;
+      const filaR = (t) => t.id ? `<tr class="clic" data-j="${t.id}"><td><b>${t.slot}</b></td><td>${esc(M.porId[t.id].n)} <span class="nota">${esc(M.porId[t.id].t)}</span>${t.jugado ? ` <span class="nota" title="Su partido ya empezó">🔒 ${t.jugado.final ? "final" : "lleva " + f1(t.real)}</span>` : ""}</td><td class="n">${f1(t.pts)}</td></tr>` : `<tr><td><b>${t.slot}</b></td><td class="malo">vacío</td><td class="n">0</td></tr>`;
       hero = `<div class="hero">
-        <div class="fila entre"><div class="hero-t">Semana ${semEquipo}${PLAYOFFS.includes(semEquipo) ? " · playoffs" : ""} ${ayuda("Probabilidad de ganar con tu alineación recomendada contra la alineación proyectada de tu rival, tomando en cuenta qué tanto suele variar cada jugador.")}</div>${selRival}</div>
+        <div class="fila entre"><div class="hero-t">Semana ${semEquipo}${PLAYOFFS.includes(semEquipo) ? " · playoffs" : ""} ${ayuda("Probabilidad de ganar con tu alineación recomendada contra la alineación proyectada de tu rival, tomando en cuenta qué tanto suele variar cada jugador. Los jugadores que ya jugaron cuentan con sus puntos reales, y se quedan donde estaban en ESPN: los titulares no se pueden sacar y los de la banca ya no pueden entrar.")}</div>${selRival}</div>
         <div class="vs">
           <div class="lado ${p >= 0.5 ? "gana" : ""}">${escudo(ligaMia)}<div class="nom">${esc(ligaMia.nombre)}</div><div class="pts">${f1(al.pts)}</div></div>
           <div class="contra-t">${medidor(p, "de ganar")}</div>
@@ -521,6 +588,7 @@
         </div>
         <div class="prob grande-p"><i class="h" style="width:${p * 100}%"></i><i class="a" style="width:${(1 - p) * 100}%"></i></div>
         <div class="hero-n">${p >= 0.65 ? "Vas como favorito claro" : p >= 0.5 ? "Vas ligeramente arriba" : p >= 0.35 ? "Vas ligeramente abajo: revisa el comparador y los waivers" : "Vas abajo: busca puntos en waivers o un cambio de alineación"}${sim && sim[ligaMia.id] ? ` · Playoffs: <b>${pct(sim[ligaMia.id].playoffs)}</b>` : ""}${miRank ? ` · Tu roster: <b>${miRank.lugar}º de ${rank.length}</b>` : ""}</div>
+        ${al.conPartidos || enf.su.conPartidos ? `<div class="hero-n nota">🔒 Ya llevan: tú <b>${f1(al.yaHechos)}</b> pts · ${esc(rival.nombre)} <b>${f1(enf.su.yaHechos)}</b> pts. El resto es proyección.</div>` : ""}
         <details class="detalles"><summary>Alineación proyectada de ${esc(rival.nombre)}</summary><table class="mini"><tbody>${enf.su.titulares.map(filaR).join("")}</tbody></table></details>
       </div>`;
     } else {
@@ -540,7 +608,7 @@
         <div class="fila bv-btns"><a class="btn" href="#" data-ir="liga">🔗 Conectar mi liga de ESPN</a><a class="btn sec-b" href="#sec-alin" id="irAgregar">➕ Agregar jugadores a mano</a></div></div>`}
       <div id="envivo"></div>
       <div class="grid2 bloque">
-        <div class="panel" id="sec-alin">${titulo(`Alineación recomendada · semana ${semEquipo}`, "Los titulares que más puntos proyectan esta semana. Proy = proyección del modelo (mezclada con la de ESPN cuando existe). Rango = de una semana mala a una buena (8 de cada 10 semanas caen ahí).")}
+        <div class="panel" id="sec-alin">${titulo(`Alineación recomendada · semana ${semEquipo}`, "Los titulares que más puntos proyectan esta semana. Proy = proyección del modelo (mezclada con la de ESPN cuando existe). Rango = de una semana mala a una buena (8 de cada 10 semanas caen ahí). 🔒 = su partido ya empezó: se muestran sus puntos reales, y si está de titular en ESPN ya no se puede sacar (o si está en la banca, ya no puede entrar).")}
           <div class="tabla-scroll"><table class="alin">
             <thead><tr><th>Puesto</th><th>Jugador</th><th class="ocultar-movil">Rival</th><th class="n">Proy</th><th class="n ocultar-movil">ESPN</th><th class="n ocultar-movil">Rango</th><th class="ocultar-movil">Estado</th><th></th></tr></thead>
             <tbody>${al.titulares.map((x) => filaAl(x)).join("")}
@@ -584,7 +652,16 @@
     const pts = (id) => M.proyectarSemana(M.porId[id], SEM).pts;
     const entran = rec.filter((id) => !tit.includes(id)).sort((a, b) => pts(b) - pts(a));
     const salen = tit.filter((id) => !rec.includes(id)).sort((a, b) => pts(a) - pts(b));
-    return entran.map((id, i) => ({ entra: id, sale: salen[i] || null, gana: pts(id) - (salen[i] ? pts(salen[i]) : 0) }));
+    // Se empareja primero con alguien de su misma posición (QB por QB, etc.)
+    const pos = (id) => M.porId[id].pos;
+    const quedan = salen.slice();
+    const pares = entran.map((id) => {
+      let k = quedan.findIndex((x) => pos(x) === pos(id));
+      if (k < 0) k = 0;
+      const sale = quedan.length ? quedan.splice(k, 1)[0] : null;
+      return { entra: id, sale, gana: pts(id) - (sale ? pts(sale) : 0) };
+    });
+    return pares;
   }
   function estaSemanaHTML(al, alertas) {
     if (semEquipo !== SEM) return "";
@@ -592,7 +669,7 @@
     const nom = (id) => esc(M.porId[id].n);
     let alin;
     if (cambios && cambios.length) alin = `<b>Cambia ${cambios.length === 1 ? "a 1 titular" : `a ${cambios.length} titulares`} en ESPN</b> (+${f1(M.sum(cambios.map((c) => c.gana)))} pts):
-      <ul class="lista-cambios">${cambios.map((c) => `<li><span class="bueno">▲ ${nom(c.entra)}</span>${c.sale ? ` en lugar de <span class="malo">${nom(c.sale)}</span>` : ""} <span class="nota">+${f1(c.gana)}</span></li>`).join("")}</ul>`;
+      <ul class="lista-cambios">${cambios.map((c) => `<li><span class="bueno">▲ ${nom(c.entra)}</span>${c.sale ? ` en lugar de <span class="malo">${nom(c.sale)}</span>` : ""} <span class="nota">${c.gana >= 0 ? "+" : ""}${f1(c.gana)}</span></li>`).join("")}</ul>`;
     else if (cambios) alin = `<b>Tu alineación en ESPN ya es la mejor.</b> Proyecta ${f1(al.pts)} pts.`;
     else alin = `<b>Alinea a tus ${al.titulares.filter((x) => x.id).length} titulares recomendados</b> (${f1(al.pts)} pts). <a href="#sec-alin">Ver alineación</a>`;
     return `<div class="panel esta-semana">${titulo(`📌 Esta semana (${SEM})`, "Lo que conviene hacer antes de los partidos. Se calcula con tu roster de ESPN y las proyecciones de la semana.")}
