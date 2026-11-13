@@ -155,9 +155,12 @@
   const SY = window.Sync;
   // Dirección de esta página para que el botón de ESPN mande la liga directo (no aplica abierta como archivo ni en claude.ai)
   const DESTINO = /^https?:$/.test(location.protocol) && !window.claude ? location.origin + location.pathname : null;
-  let roster = [], origenRoster = "";
+  let roster = [], origenRoster = "", irMio = [];
+  // Quiénes de un equipo de la liga están en su lista de lesionados (IR) de ESPN
+  const irDe = (e) => (e && e.ir ? e.ir.filter((id) => M.porId[id]) : []);
   function cargarRoster() {
     const r = SY.estado.roster;
+    irMio = ligaMia ? irDe(ligaMia) : [];
     // Con la liga de ESPN conectada, el roster siempre es el de ESPN (se pone al día con ⟳ Actualizar)
     if (ligaMia) { roster = ligaMia.jugadores.filter((id) => M.porId[id]); origenRoster = "tu liga de ESPN"; }
     else if (r && r.length) { roster = r.filter((id) => M.porId[id]); origenRoster = "tu lista"; }
@@ -167,6 +170,27 @@
   const guardarRoster = () => { SY.estado.roster = roster.slice(); SY.guardar(); invalidar(); };
   const seguido = (id) => SY.estado.seguimiento.some((x) => x.id === id);
   const enRoster = (id) => roster.includes(id);
+  // ---------------- Límites del roster ----------------
+  // En ESPN: máximo de jugadores = titulares + banca; los de IR no cuentan contra ese máximo,
+  // pero para sacar a alguien de IR necesitas un lugar libre (si no, hay que soltar a alguien).
+  // Si un jugador en IR ya no está lesionado, ESPN no te deja agregar ni cambiar hasta que lo actives.
+  const activos = () => roster.filter((id) => !irMio.includes(id));
+  function plantilla() {
+    const max = M.cfg.rosterMax, n = activos().length;
+    const irSlots = M.cfg.ir || 0;
+    return {
+      sabe: !!ligaMia, // sin liga no sabemos cuántos lugares tienes: se asume que el roster está lleno
+      max, activos: n, libres: ligaMia ? Math.max(0, max - n) : 0, sobran: ligaMia ? Math.max(0, n - max) : 0,
+      banca: M.cfg.banca, irSlots, irUsados: irMio.length, irLibres: Math.max(0, irSlots - irMio.length),
+      irConocido: !!(ligaMia && Array.isArray(ligaMia.ir)),
+      ilegales: irMio.filter((id) => !M.elegibleIR(M.porId[id])),
+    };
+  }
+  // ¿Cabe uno más de su posición? (algunas ligas limitan, p. ej., a 4 QB por roster)
+  const cabePos = (ids, id) => {
+    const p = M.porId[id].pos, lim = (M.cfg.limitesPos || {})[p];
+    return !lim || ids.filter((x) => M.porId[x] && M.porId[x].pos === p).length < lim;
+  };
 
   // Lista para autocompletar
   const etiqueta = (j) => `${j.n} (${nombrePos(j.pos)}, ${j.t})`;
@@ -289,6 +313,9 @@
   }
   // Alineación de una semana; en la semana en curso toma en cuenta los partidos que ya empezaron
   function alin(ids, w, equipo) {
+    // Los que están en IR no se pueden alinear esta semana
+    const ir = irDe(equipo);
+    if (ir.length && w === SEM) ids = ids.filter((id) => !ir.includes(id));
     if (w !== SEM) return M.alineacion(ids, w);
     return M.alineacion(ids, w, null, { enJuego, titulares: titularesDe(equipo) });
   }
@@ -502,6 +529,7 @@
     // Alertas
     const alertas = [];
     const alerta = (tipo, ico, html, id) => `<li class="al-${tipo} ${id ? "clic" : ""}" ${id ? `data-j="${id}"` : ""}><span class="al-ico" aria-hidden="true">${ico}</span><span>${html}</span></li>`;
+    if (roster.length && semEquipo === SEM) alertasRoster().forEach(([tipo, ico, html, id]) => alertas.push(alerta(tipo, ico, html, id)));
     if (roster.length) al.titulares.forEach((t) => {
       if (!t.id) { alertas.push(alerta("rojo", "➕", `<b>${t.slot}</b>: no tienes a nadie para este puesto. Busca en <a href="#" data-ir="objetivos">Mercado</a>.`)); return; }
       if (t.jugado) return; // ya jugó o está jugando: no hay nada que hacer
@@ -535,6 +563,16 @@
         <td class="n ocultar-movil">${pr.bye || !pr.pts ? "–" : f0(piso(x)) + "–" + f0(techo(x))}</td>
         <td class="ocultar-movil">${estadoTag(pr)}</td>
         <td>${ligaMia ? "" : `<button class="x" data-quitar="${j.id}" title="Quitar de mi equipo">×</button>`}</td></tr>`;
+    };
+    // Jugadores en la lista de lesionados (IR) de ESPN: no se pueden alinear
+    const filaIR = (id) => {
+      const j = M.porId[id], ok = M.elegibleIR(j), w = M.semanaRegreso(j, ULTIMA);
+      const tag = ok ? `<span class="tag gris">${esc(ok)}</span>` : `<span class="tag rojo" title="ESPN no te deja hacer movimientos hasta que lo actives">Ya no está lesionado: actívalo</span>`;
+      return `<tr class="clic" data-j="${id}"><td><span class="slot bn">IR</span></td>
+        <td>${jugHTML(j)}<div class="solo-movil mt-al">${tag}</div></td>
+        <td class="ocultar-movil">${w ? `Regreso estimado: semana ${w}` : "Sin regreso esperado"}</td>
+        <td class="n grande">–</td><td class="n ocultar-movil">–</td><td class="n ocultar-movil">–</td>
+        <td class="ocultar-movil">${tag}</td><td></td></tr>`;
     };
     // Jugadores cuyo partido ya empezó: se muestran sus puntos reales y quedan bloqueados
     const filaJugado = (x, j, banca) => {
@@ -613,7 +651,8 @@
             <thead><tr><th>Puesto</th><th>Jugador</th><th class="ocultar-movil">Rival</th><th class="n">Proy</th><th class="n ocultar-movil">ESPN</th><th class="n ocultar-movil">Rango</th><th class="ocultar-movil">Estado</th><th></th></tr></thead>
             <tbody>${al.titulares.map((x) => filaAl(x)).join("")}
             <tr><td colspan="8" class="sep">Banca</td></tr>
-            ${al.banca.map((x) => filaAl(x, true)).join("")}</tbody></table></div>
+            ${al.banca.filter((x) => !irMio.includes(x.id)).map((x) => filaAl(x, true)).join("")}
+            ${irMio.length ? `<tr><td colspan="8" class="sep">Lista de lesionados (IR)</td></tr>${irMio.map(filaIR).join("")}` : ""}</tbody></table></div>
           ${ligaMia ? `<p class="nota" style="margin-top:8px">Tu roster viene de ESPN. Si hiciste un cambio allá, da clic en <b>⟳ Actualizar</b>.</p>` : `<div class="fila" style="margin-top:10px"><input type="text" id="agregar" list="listaJugadores" placeholder="Agregar jugador a mi equipo…" style="flex:1;min-width:200px">
             <button class="btn" id="btnAgregar">Agregar</button></div>`}
         </div>
@@ -622,6 +661,7 @@
           <div class="panel" id="noticiasRoster">${titulo("📰 Noticias de tu roster", "Las notas más recientes de Rotowire (vía ESPN) sobre tus jugadores. Vienen en inglés; toca Traducir para verlas en español.")}<div class="vacio">${roster.length ? "Cargando noticias…" : "Agrega jugadores para ver sus noticias."}</div></div>
         </div>
       </div>
+      ${roster.length ? `<div class="panel bloque" id="sec-ir">${titulo("🏥 Roster e IR", "Tu liga tiene un máximo de jugadores (titulares + banca) y lugares aparte para la lista de lesionados (IR). Los de IR no cuentan contra el máximo, pero para sacar a alguien de IR necesitas un lugar libre, así que muchas veces hay que soltar a alguien. ESPN deja poner en IR a quien está Fuera (O), en la lista de lesionados de la NFL o suspendido. Si alguien en tu IR ya está sano, ESPN no te deja hacer movimientos hasta que lo actives.")}<div class="ir-cuerpo"><div class="vacio">Revisando tu roster…</div></div></div>` : ""}
       <div class="grid2 bloque">
         <div class="panel" id="sec-graf">${titulo("Proyección de tu alineación por semana", "Barra = puntos proyectados de tu mejor alineación cada semana. La línea muestra el rango de semana mala a buena. Las semanas sombreadas son los playoffs de fantasy. Abajo se marca cuántos de tus jugadores descansan (bye).")}${graficaSVG(resto)}</div>
         <div class="panel" id="sec-fuerza">${titulo("💪 Fuerza por posición (resto de temporada)", `Tus titulares contra el titular promedio de una liga de ${M.cfg.equipos} equipos. Las posiciones débiles son las que conviene reforzar con un trade o waivers.`)}
@@ -639,7 +679,7 @@
     pintarNoticiasRoster();
     pintarVivo();
     conectarClics(el);
-    if (roster.length) { guardarFotoSemana(); llenarEstaSemana(); }
+    if (roster.length) { guardarFotoSemana(); llenarEstaSemana(); setTimeout(pintarIR, 40); }
   };
 
   // ================= ESTA SEMANA =================
@@ -689,7 +729,8 @@
       const sem = Math.max(1, ULTIMA - SEM + 1);
       const w = cache.waivers.agregar[0];
       ew.classList.remove("nota");
-      ew.innerHTML = w ? `<b>Agrega a <a href="#" data-j="${w.add}">${esc(M.porId[w.add].n)}</a></b> y suelta a ${esc(M.porId[w.drop].n)}: +${f1(w.gana / sem)} pts por semana.
+      const bloqueo = cache.waivers.pl.ilegales.length ? ` <span class="malo">Antes activa a ${cache.waivers.pl.ilegales.map((id) => esc(M.porId[id].n)).join(" y ")} de tu IR: ESPN no te deja agregar hasta entonces.</span>` : "";
+      ew.innerHTML = w ? `<b>Agrega a <a href="#" data-j="${w.add}">${esc(M.porId[w.add].n)}</a></b> ${quienSale(w)}: +${f1(w.gana / sem)} pts por semana.${bloqueo}
         ${M.cfg.faab ? `<span class="nota">Oferta sugerida: $${ofertaFaab(w.gana / sem)}.</span>` : ""} <a href="#" data-ir="objetivos">Más opciones</a>`
         : `<span class="nota">Nadie libre mejora tu equipo ahora mismo.</span>`;
       const s = cache.sugerencias[0];
@@ -1179,7 +1220,13 @@
   $("#modal").onclick = (e) => { if (e.target.id === "modal") $("#modal").hidden = true; };
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#modal").hidden = true; });
   function conectarClics(el) {
-    el.querySelectorAll("[data-j]").forEach((tr) => (tr.onclick = (e) => { if (e.target.closest("button, a, input, select")) return; detalle(tr.dataset.j); }));
+    el.querySelectorAll("[data-j]").forEach((tr) => (tr.onclick = (e) => {
+      // Un botón o enlace dentro de la fila hace lo suyo; un enlace que es el jugador mismo abre su ficha
+      const c = e.target.closest("button, a, input, select");
+      if (c && c !== tr) return;
+      if (c) e.preventDefault();
+      detalle(tr.dataset.j);
+    }));
   }
 
   // ================= TRADES =================
@@ -1228,7 +1275,12 @@
       // ¿De qué equipo son los que recibo? Si todos son del mismo, se calcula su lado también
       const duenos = Array.from(new Set(trade.recibo.map((id) => duenoDe[id] && !duenoDe[id].mio ? duenoDe[id].id : null)));
       const otro = duenos.length === 1 && duenos[0] !== null ? D.liga.equipos.find((e) => e.id === duenos[0]) : null;
-      const r = M.evaluarTrade(trade.doy, trade.recibo, roster.some((id) => trade.doy.includes(id)) ? roster : null, otro ? otro.jugadores : null);
+      const r = M.evaluarTrade(trade.doy, trade.recibo, roster.some((id) => trade.doy.includes(id)) ? roster : null, otro ? otro.jugadores : null,
+        { miIR: irMio, miMax: ligaMia ? M.cfg.rosterMax : Infinity, suIR: irDe(otro), suMax: M.cfg.rosterMax });
+      const nombres = (ids) => ids.map((id) => `<b>${esc(M.porId[id].n)}</b>`).join(" y ");
+      const lugar = (r.impacto && r.impacto.soltar.length ? `<li>✂️ Recibes más jugadores de los que das y tu roster quedaría pasado del máximo (${M.cfg.rosterMax}): tendrías que soltar a ${nombres(r.impacto.soltar)}. Ya está contado en el veredicto.</li>` : "")
+        + (r.impactoOtro && r.impactoOtro.soltar.length ? `<li>✂️ ${esc(otro.nombre)} tendría que soltar a ${nombres(r.impactoOtro.soltar)} para hacer lugar.</li>` : "")
+        + trade.recibo.filter((id) => otro && irDe(otro).includes(id)).map((id) => `<li>🏥 <b>${esc(M.porId[id].n)}</b> está en el IR de ${esc(otro.nombre)}: al recibirlo ${plantilla().irLibres && M.elegibleIR(M.porId[id]) ? "puedes ponerlo en tu IR" : "ocupa un lugar en tu banca"}.</li>`).join("");
       const max = Math.max(r.vD, r.vR, 1);
       const imp = r.impacto ? `<p style="margin-top:10px"><b>Tu alineación:</b> ${r.impacto.dif >= 0 ? `<span class="bueno fuerte">+${f1(r.impacto.porSemana)} pts por semana</span>` : `<span class="malo fuerte">${f1(r.impacto.porSemana)} pts por semana</span>`}
         (${f0(r.impacto.antes)} → ${f0(r.impacto.luego)} pts de aquí al final). Considera a quién pondrías de titular cada semana, descansos y lesiones.</p>` : "";
@@ -1252,7 +1304,7 @@
           <div><div class="nota">Valor que recibes</div><div class="fila"><div class="barra" style="flex:1"><i style="width:${(r.vR / max) * 100}%"></i></div><b>${f0(r.vR)}</b></div></div>
         </div><p class="nota">El valor mide lo que aporta cada jugador por encima de uno de waivers, sin importar tu roster. Sirve para saber si el otro equipo lo vería justo.</p></details>
         ${r.porPuntos ? "" : imp}
-        ${avisos ? `<ul class="avisos">${avisos}</ul>` : ""}
+        ${avisos || lugar ? `<ul class="avisos">${lugar}${avisos}</ul>` : ""}
         <p class="nota" style="margin-top:8px">${recibeMejor ? "Recibes al mejor jugador del trade; eso suele valer más que varias piezas medianas. " : "Das al mejor jugador del trade; asegúrate de que lo que recibes llene una necesidad real. "}
         Playoffs de fantasy (semanas ${PLAYOFFS.join(", ")}): das ${f0(playD)} pts proyectados y recibes ${f0(playR)}.</p></div>`;
     }
@@ -1331,23 +1383,135 @@
   }
 
   // ================= MOVIMIENTOS =================
+  // Avisos del roster para "Esta semana": IR mal usado, lugares de IR sin usar, roster pasado del máximo
+  function alertasRoster() {
+    const pl = plantilla(), out = [];
+    if (!pl.sabe) return out;
+    const nom = (id) => esc(M.porId[id].n);
+    pl.ilegales.forEach((id) => out.push(["rojo", "🚨", `<b>${nom(id)}</b> ya no está lesionado y sigue en tu IR: ESPN no te deja agregar ni hacer cambios hasta que lo actives${pl.libres ? "" : " (y para eso tienes que soltar a alguien)"}. <a href="#sec-ir">Ver qué hacer</a>`, id]));
+    if (pl.sobran) out.push(["rojo", "⚠️", `Tienes <b>${pl.sobran} ${pl.sobran === 1 ? "jugador" : "jugadores"} de más</b> (${pl.activos} de ${pl.max}). <a href="#sec-ir">Ver a quién soltar</a>`]);
+    const mover = activos().filter((id) => M.elegibleIR(M.porId[id])).sort((a, b) => M.porId[b].fila.ros - M.porId[a].fila.ros).slice(0, pl.irLibres);
+    mover.forEach((id) => out.push(["amar", "🏥", `Mueve a <b>${nom(id)}</b> (${esc(M.elegibleIR(M.porId[id]))}) a tu IR: te libera un lugar en la banca sin soltar a nadie.`, id]));
+    return out;
+  }
   function calcularWaivers() {
     const base = M.puntosRestoTemporada(roster);
+    const pl = plantilla(), act = activos();
     const candidatos = M.tabla.filter((x) => esLibre(x.j.id) && x.ros > 0).sort((a, b) => b.rosPG - a.rosPG).slice(0, 70);
     const agregar = [];
     const minimo = Math.max(3, 0.5 * Math.max(1, ULTIMA - SEM + 1)); // al menos medio punto por semana
+    // Lugar para agregar sin soltar: un lugar libre, o mover a IR a alguien que ya puede ir
+    const aIR = !pl.libres && pl.irLibres ? act.filter((id) => M.elegibleIR(M.porId[id])).sort((a, b) => M.porId[b].fila.ros - M.porId[a].fila.ros)[0] || null : null;
+    const sinSoltar = pl.libres > 0 || !!aIR;
     candidatos.forEach((x) => {
       let mejor = null;
-      roster.forEach((d) => {
-        const gana = M.puntosRestoTemporada(roster.filter((r) => r !== d).concat([x.j.id])) - base;
+      if (sinSoltar) {
+        if (cabePos(roster, x.j.id)) {
+          const gana = M.puntosRestoTemporada(roster.concat([x.j.id])) - base;
+          if (gana > minimo) mejor = { add: x.j.id, drop: null, ir: pl.libres ? null : aIR, gana };
+        }
+      } else act.forEach((d) => {
+        // Solo se suelta a alguien activo: soltar a uno de IR no abre lugar en el roster
+        const r = roster.filter((y) => y !== d);
+        if (!cabePos(r, x.j.id)) return;
+        const gana = M.puntosRestoTemporada(r.concat([x.j.id])) - base;
         if (gana > minimo && (!mejor || gana > mejor.gana)) mejor = { add: x.j.id, drop: d, gana };
       });
       if (mejor) agregar.push(mejor);
     });
     agregar.sort((a, b) => b.gana - a.gana);
-    const soltar = roster.map((id) => ({ id, aporta: base - M.puntosRestoTemporada(roster.filter((r) => r !== id)) }))
-      .sort((a, b) => a.aporta - b.aporta).slice(0, 5);
-    return { agregar: agregar.slice(0, 10), soltar };
+    const soltar = act.map((id) => ({ id, aporta: base - M.puntosRestoTemporada(roster.filter((r) => r !== id)) }))
+      .sort((a, b) => a.aporta - b.aporta);
+    return { agregar: agregar.slice(0, 10), soltar: soltar.slice(0, 5), soltarTodos: soltar, pl };
+  }
+  // Cómo se hace lugar para un jugador de waivers (texto)
+  const quienSale = (w) => w.drop ? `y suelta a ${esc(M.porId[w.drop].n)}` : w.ir ? `y mueve a ${esc(M.porId[w.ir].n)} a IR (no sueltas a nadie)` : "(tienes un lugar libre: no sueltas a nadie)";
+  // Qué hacer con la lista de lesionados (IR) y los lugares del roster
+  function analisisIR() {
+    const pl = plantilla();
+    if (!pl.sabe) return null;
+    const W = cache.waivers || (cache.waivers = calcularWaivers());
+    const act = activos();
+    const sem = Math.max(1, ULTIMA - SEM + 1);
+    // El que menos le aporta a tu alineación (sin contar a los que se excluyen)
+    const soltable = (excl) => W.soltarTodos.find((x) => !excl.includes(x.id)) || null;
+    const items = [];
+    let libres = pl.libres;
+    const sueltos = [], aIR = []; // a quiénes ya se sugirió soltar o mover a IR
+    const fuera = () => sueltos.concat(aIR);
+    // Activar a los que ya están sanos libera su lugar de IR
+    let irLibres = pl.irLibres + pl.ilegales.length;
+    const enIRok = irMio.filter((id) => M.elegibleIR(M.porId[id]));
+    // 1) Activos que pueden ir a IR: los de más valor primero (a los de poco valor conviene soltarlos).
+    //    Cada uno que entra a IR abre un lugar en el roster.
+    const eleg = act.filter((id) => M.elegibleIR(M.porId[id])).sort((a, b) => M.porId[b].fila.ros - M.porId[a].fila.ros);
+    eleg.forEach((id) => {
+      const x = M.porId[id].fila, aporta = W.soltarTodos.find((y) => y.id === id);
+      const ap = aporta ? aporta.aporta / sem : 0;
+      if (irLibres > 0) { irLibres--; libres++; aIR.push(id); items.push({ tipo: "mover", id, ap }); return; }
+      // IR lleno: ¿hay alguien en IR que valga bastante menos? Se suelta a ese y este entra a IR
+      const peorIR = enIRok.filter((y) => !sueltos.includes(y)).sort((a, b) => M.porId[a].fila.ros - M.porId[b].fila.ros)[0];
+      if (peorIR && M.porId[peorIR].fila.ros + 5 < x.ros) {
+        sueltos.push(peorIR); aIR.push(id); libres++;
+        items.push({ tipo: "cambiarIR", id, sale: peorIR, ap });
+      } else if (ap < 0.3) items.push({ tipo: "soltarLesionado", id, ap });
+      else items.push({ tipo: "banca", id, ap });
+    });
+    // 2) En IR pero ya sano: hay que activarlo (ESPN bloquea movimientos). Va hasta arriba.
+    //    Si alguien de tu banca entra a IR, en ESPN se pueden intercambiar los dos en un solo paso.
+    const movidos = items.filter((x) => x.tipo === "mover" || x.tipo === "cambiarIR");
+    let vacios = pl.libres; // lugares libres de verdad (sin contar los que abren los de arriba)
+    const activar = pl.ilegales.map((id) => {
+      if (libres > 0) {
+        libres--;
+        if (vacios > 0) { vacios--; return { tipo: "activar", id, soltar: null }; }
+        const par = movidos.find((x) => !x.conActivar);
+        if (par) par.conActivar = id;
+        return { tipo: "activar", id, soltar: null, por: par ? par.id : null };
+      }
+      const s = soltable([id].concat(fuera()));
+      if (s) sueltos.push(s.id);
+      return { tipo: "activar", id, soltar: s };
+    });
+    items.unshift(...activar);
+    // 3) Los que siguen en IR: cuándo regresan y a quién habría que soltar entonces
+    enIRok.filter((id) => !sueltos.includes(id)).forEach((id) => {
+      const j = M.porId[id], w = M.semanaRegreso(j, ULTIMA);
+      items.push({ tipo: "enIR", id, regreso: w, soltar: libres > 0 ? null : soltable([id].concat(fuera())), inutil: !w || j.fila.ros < 3 });
+    });
+    // 4) Roster pasado del máximo
+    if (pl.sobran) W.soltarTodos.filter((x) => !fuera().includes(x.id)).slice(0, pl.sobran).forEach((x) => items.push({ tipo: "sobra", id: x.id, ap: x.aporta / sem }));
+    return { pl, items };
+  }
+  function pintarIR() {
+    const el = $("#sec-ir");
+    if (!el) return;
+    const A = analisisIR();
+    if (!A) { el.querySelector(".ir-cuerpo").innerHTML = `<p class="nota">Conecta tu liga de ESPN para saber cuántos lugares tienes en el roster, la banca y la lista de lesionados (IR).</p>`; return; }
+    const { pl, items } = A;
+    const n = (id) => `<a href="#" data-j="${id}"><b>${esc(M.porId[id].n)}</b></a>`;
+    const sl = (x) => (x ? `${n(x.id)} <span class="nota">(te aporta ${f1(x.aporta / Math.max(1, ULTIMA - SEM + 1))} pts/sem)</span>` : "alguien de tu banca");
+    const est = (id) => esc(M.elegibleIR(M.porId[id]) || "");
+    const txt = {
+      activar: (x) => ["rojo", "🚨", `${n(x.id)} ya no está lesionado y sigue en IR. ESPN no te deja agregar ni hacer cambios hasta que lo actives. ${x.soltar ? `Tu roster está lleno: para activarlo suelta a ${sl(x.soltar)}.` : x.por ? `Intercámbialo por ${n(x.por)}: ${n(x.por)} entra a IR y ${n(x.id)} pasa a tu banca, sin soltar a nadie.` : "Tienes lugar: solo actívalo."}`],
+      mover: (x) => ["verde", "🏥", x.conActivar ? `Mueve a ${n(x.id)} (${est(x.id)}) a IR en lugar de ${n(x.conActivar)} (ver arriba).` : `Mueve a ${n(x.id)} (${est(x.id)}) a IR. Te libera un lugar en la banca sin soltar a nadie; úsalo para agregar a alguien de <a href="#" data-ir="objetivos">waivers</a>.`],
+      cambiarIR: (x) => ["amar", "🔄", `${n(x.id)} (${est(x.id)}) puede ir a IR, pero tu IR está lleno con ${n(x.sale)}, que vale menos lo que resta. Suelta a ${n(x.sale)} y mete a ${n(x.id)} a IR${x.conActivar ? ` (así también tienes lugar para activar a ${n(x.conActivar)})` : ""}.`],
+      soltarLesionado: (x) => ["amar", "✂️", `${n(x.id)} (${est(x.id)}) ocupa un lugar en tu banca, tu IR está lleno y casi no te aporta (${f1(x.ap)} pts/sem). Puedes soltarlo para agregar a alguien.`],
+      banca: (x) => ["gris", "🩹", `${n(x.id)} (${est(x.id)}) puede ir a IR, pero tu IR está lleno. Consérvalo en la banca: te aporta ${f1(x.ap)} pts/sem cuando regrese.`],
+      enIR: (x) => x.inutil ? ["amar", "🗑️", `${n(x.id)} está en tu IR${x.regreso ? ` (regreso estimado: semana ${x.regreso})` : " y no se espera que regrese antes de tus playoffs"}. Le queda poco valor: si alguien más necesita el lugar de IR, suéltalo.`]
+        : ["gris", "📅", `${n(x.id)} está en tu IR. Regreso estimado: <b>semana ${x.regreso}</b>. ${x.soltar ? `Cuando regrese, para activarlo tendrás que soltar a alguien; hoy sería ${sl(x.soltar)}.` : "Tienes lugar para activarlo cuando regrese."}`],
+      sobra: (x) => ["rojo", "✂️", `Tienes jugadores de más: suelta a ${n(x.id)} (te aporta ${f1(x.ap)} pts/sem).`],
+    };
+    const lista = items.map((x) => { const [c, ico, h] = txt[x.tipo](x); return `<li class="al-${c}"><span class="al-ico" aria-hidden="true">${ico}</span><span>${h}</span></li>`; }).join("");
+    const caja = (t, v, sub, mal) => `<div class="ir-caja ${mal ? "mal" : ""}"><div class="nota">${t}</div><b>${v}</b>${sub ? `<div class="nota">${sub}</div>` : ""}</div>`;
+    el.querySelector(".ir-cuerpo").innerHTML = `<div class="ir-cajas">
+        ${caja("Roster", `${pl.activos} / ${pl.max}`, pl.libres ? `${pl.libres} ${pl.libres === 1 ? "lugar libre" : "lugares libres"}` : pl.sobran ? `${pl.sobran} de más` : "lleno", pl.sobran)}
+        ${caja("Banca", `${pl.banca}`, "lugares")}
+        ${caja("IR", `${pl.irUsados} / ${pl.irSlots}`, pl.irSlots ? (pl.irLibres ? `${pl.irLibres} libre${pl.irLibres > 1 ? "s" : ""}` : "lleno") : "tu liga no tiene IR", pl.irUsados > pl.irSlots || pl.ilegales.length)}
+      </div>
+      ${!pl.irConocido ? `<p class="nota">Da clic en <b>⟳ Actualizar</b> para saber quién está en tu IR de ESPN.</p>` : ""}
+      ${lista ? `<ul class="lista-al">${lista}</ul>` : `<p class="nota">Todo en orden: nadie de tu roster puede ir a IR y nadie en tu IR está por regresar.</p>`}`;
+    conectarClics(el);
   }
   function calcularSugerencias() {
     const base = M.puntosRestoTemporada(roster);
@@ -1481,13 +1645,14 @@
       <div class="grid2 anchas bloque">
         <div class="panel">${titulo("➕ Agregar de waivers", `${D.liga ? "Jugadores que nadie tiene en tu liga" : "Jugadores en pocas ligas de ESPN (conecta tu liga para ver solo los libres de verdad)"}, ordenados por cuántos puntos le suman a tu alineación lo que resta de la temporada, y a quién soltarías.${fa ? " La oferta FAAB sugerida depende de cuánto te suma y de lo que te queda de presupuesto." : ""} 🔥 = de los más agregados hoy en Sleeper.`)}
           ${fa && queda !== null ? `<p class="nota">Te quedan <b>$${queda}</b> de $${fa.presupuesto} de FAAB.</p>` : ""}
+          ${W && W.pl.sabe ? `<p class="nota">Roster: <b>${W.pl.activos} de ${W.pl.max}</b>${W.pl.libres ? ` · ${W.pl.libres} ${W.pl.libres === 1 ? "lugar libre" : "lugares libres"}` : " · lleno: para agregar hay que soltar"} · IR: ${W.pl.irUsados} de ${W.pl.irSlots}.${W.pl.ilegales.length ? ` <span class="malo">Activa primero a ${W.pl.ilegales.map((id) => esc(M.porId[id].n)).join(" y ")} de tu IR: ESPN no te deja agregar hasta entonces.</span>` : ""} <a href="#" data-ir="equipo">Ver Roster e IR</a></p>` : ""}
           ${sinRoster ? necesitaRoster : W ? (W.agregar.length ? `<div class="tabla-scroll"><table class="mini"><thead><tr><th>Agrega</th><th>Suelta</th><th class="n">Gana</th>${fa ? `<th class="n">Oferta FAAB</th>` : ""}</tr></thead><tbody>${W.agregar.map((w) => { const of = ofertaFaab(w.gana / semanas); const j = M.porId[w.add]; return `<tr>
             <td class="clic" data-j="${w.add}">${jugHTML(j, j.espn ? j.espn.own + "% ligas" : "")} ${tSl(j)}<div class="nota" style="margin-left:42px">Proy. semana ${SEM}: ${f1(j.fila.sem.pts)} · resto: ${f0(j.fila.ros)}</div></td>
-            <td class="clic" data-j="${w.drop}">${jugHTML(M.porId[w.drop])}</td>
+            ${w.drop ? `<td class="clic" data-j="${w.drop}">${jugHTML(M.porId[w.drop])}</td>` : w.ir ? `<td class="clic" data-j="${w.ir}">${jugHTML(M.porId[w.ir], "muévelo a IR")}</td>` : `<td class="nota">Nadie: tienes lugar</td>`}
             <td class="n bueno fuerte">+${f1(w.gana / semanas)}<div class="nota">pts/sem</div></td>
             ${fa ? `<td class="n fuerte">${of ? (of.max ? `$${of.min}–${of.max}` : "$0") : "–"}</td>` : ""}</tr>`; }).join("")}</tbody></table></div>` :
             `<div class="vacio">Ningún agente libre mejora tu alineación ahora mismo.</div>`) : `<div class="vacio">Calculando…</div>`}</div>
-        <div class="panel">${titulo("➖ Candidatos para soltar", "Los jugadores de tu roster que menos puntos le aportan a tu alineación lo que resta de la temporada (casi nunca serían titulares).")}
+        <div class="panel">${titulo("➖ Candidatos para soltar", "Los jugadores de tu roster que menos puntos le aportan a tu alineación lo que resta de la temporada (casi nunca serían titulares). No incluye a los de tu IR: soltarlos no te abre lugar en el roster.")}
           ${sinRoster ? necesitaRoster : W ? (W.soltar.length ? `<div class="tabla-scroll"><table class="mini"><thead><tr><th>Jugador</th><th class="n">Aporta</th><th class="n">Valor</th></tr></thead><tbody>${W.soltar.map((w) => `<tr class="clic" data-j="${w.id}">
             <td>${jugHTML(M.porId[w.id])}</td><td class="n">${f1(w.aporta / semanas)}<div class="nota">pts/sem</div></td><td class="n">${M.porId[w.id].fila.valor}</td></tr>`).join("")}</tbody></table></div>` : `<div class="vacio">Nadie.</div>`) : `<div class="vacio">Calculando…</div>`}</div>
         <div class="panel">${titulo("★ Mis seguimientos", "Abre a cualquier jugador y toca ☆ Seguir para tenerlo aquí, con tus notas, en la computadora y en el teléfono.")}

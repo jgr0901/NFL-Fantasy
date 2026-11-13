@@ -32,4 +32,8 @@ Las estadísticas vienen de [nflverse](https://github.com/nflverse) y de ESPN. S
 
 La página también guarda tu alineación de cada semana (en tu cuenta) para mostrar en **Mi equipo → Tus decisiones** cuántos puntos dejaste en la banca, y sigue los trades que marcas como hechos.
 
+## Roster e IR
+
+Con la liga conectada, la página lee de ESPN el máximo de jugadores (titulares + banca), los lugares de IR y el límite por posición. Los waivers solo piden soltar a alguien si tu roster está lleno (o sugieren mover a IR a quien ya puede ir), los trades que te dejan con jugadores de más cuentan a quién tendrías que soltar, y **Mi equipo → Roster e IR** dice a quién mover a IR, cuándo regresan los que están ahí, a quién soltar para activarlos y avisa si alguien en tu IR ya está sano (ESPN bloquea tus movimientos hasta que lo actives).
+
 La puntuación y la alineación salen de tu liga de ESPN; sin liga se usa una PPR de 10 equipos (ver `modelo.js`).
