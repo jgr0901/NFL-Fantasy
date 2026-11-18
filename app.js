@@ -1272,6 +1272,23 @@
   // ================= TRADES =================
   const trade = { doy: [], recibo: [] };
   let vistaTrades = "analizar", posValores = "TODOS";
+  // Equipo rival elegido en "Tú recibes": se recuerda entre repintados para poder agregar varios jugadores seguidos
+  let otroEq = "", tTrades = 0;
+  // Repinta el análisis poco después del último toque: si tocas varios jugadores rápido solo se calcula una vez
+  function repintarTrades(espera) {
+    clearTimeout(tTrades);
+    tTrades = setTimeout(() => { const y = window.scrollY; render.trades(); window.scrollTo(0, y); }, espera == null ? 180 : espera);
+  }
+  // Respuesta inmediata al tocar un jugador: lo pasa a la lista sin esperar el cálculo del trade
+  function moverALista(el, clave, id, chip) {
+    if (chip) chip.remove();
+    const ul = el.querySelector(".lado-trade." + clave + " .lista-trade");
+    if (!ul) return;
+    const vacio = ul.querySelector("li.nota"); if (vacio) vacio.remove();
+    const x = M.porId[id].fila, li = document.createElement("li");
+    li.innerHTML = `<div>${jugHTML(x.j, "resto: " + f0(x.ros) + " pts")}</div><div class="fila" style="gap:8px"><span class="fuerte">${x.valor}</span></div>`;
+    ul.appendChild(li);
+  }
   // Señales de que un jugador probablemente baje (para no pagar de más)
   function razonesVenta(x) {
     const r = [];
@@ -1307,7 +1324,7 @@
         <ul class="lista-trade">${ids.map((id) => { const x = M.porId[id].fila; return `<li><div class="clic" data-j="${id}" style="cursor:pointer">${jugHTML(x.j, "resto: " + f0(x.ros) + " pts")}</div>
           <div class="fila" style="gap:8px"><span class="fuerte">${x.valor}</span>${tendenciaHTML(x)}<button class="x" data-del="${clave}" data-id="${id}">×</button></div></li>`; }).join("") || `<li class="nota">Nadie todavía</li>`}</ul>
         ${clave === "doy" ? (roster.length ? `<div class="nota">Toca para agregar de tu equipo:</div><div class="chips chips-j">${roster.filter((id) => !trade.doy.includes(id)).map((id) => chipJ(id, `data-rap="doy" data-id="${id}"`)).join("")}</div>` : `<p class="nota">Agrega tu roster en Mi equipo para ver el impacto en tu alineación.</p>`) : ""}
-        ${clave === "recibo" && D.liga ? `<div class="nota">Roster de otro equipo:</div><select id="otroEquipo"><option value="">Elegir equipo…</option>${D.liga.equipos.filter((e) => !e.mio).map((e) => `<option value="${e.id}">${esc(e.nombre)}</option>`).join("")}</select><div class="chips chips-j" id="chipsOtro"></div>` : ""}
+        ${clave === "recibo" && D.liga ? `<div class="nota">Roster de otro equipo:</div><select id="otroEquipo"><option value="">Elegir equipo…</option>${D.liga.equipos.filter((e) => !e.mio).map((e) => `<option value="${e.id}"${String(e.id) === otroEq ? " selected" : ""}>${esc(e.nombre)}</option>`).join("")}</select><div class="chips chips-j" id="chipsOtro">${chipsOtroHTML()}</div>` : ""}
       </div>`;
     };
     let res = "";
@@ -1354,11 +1371,11 @@
         ${trade.doy.length && trade.recibo.length ? `<input type="text" id="notaTrade" placeholder="Nota: con quién, qué te contestaron…" style="flex:1;min-width:200px"><button class="btn" id="guardarTrade">Guardar trade</button><button class="sec" id="tradeHecho" title="Guárdalo como hecho para seguir si te convino">Ya lo hice</button>` : ""}
         <button class="sec" id="limpiarTrade">Limpiar</button></div>` : ""}
       ${guardadosHTML()}`;
-    const add = (clave) => { const id = desdeEntrada($("#in-" + clave).value); if (id && !trade[clave].includes(id)) { trade[clave].push(id); render.trades(); } };
+    const add = (clave) => { const id = desdeEntrada($("#in-" + clave).value); if (id && !trade[clave].includes(id)) { trade[clave].push(id); repintarTrades(0); } };
     el.querySelectorAll("[data-add]").forEach((b) => (b.onclick = () => add(b.dataset.add)));
     ["doy", "recibo"].forEach((c) => ($("#in-" + c).onkeydown = (e) => { if (e.key === "Enter") add(c); }));
-    el.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => { trade[b.dataset.del] = trade[b.dataset.del].filter((i) => i !== b.dataset.id); render.trades(); }));
-    el.querySelectorAll("[data-rap]").forEach((b) => (b.onclick = () => { trade[b.dataset.rap].push(b.dataset.id); render.trades(); }));
+    el.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => { trade[b.dataset.del] = trade[b.dataset.del].filter((i) => i !== b.dataset.id); b.closest("li").remove(); repintarTrades(); }));
+    el.querySelectorAll("[data-rap]").forEach((b) => (b.onclick = () => { const id = b.dataset.id; if (!trade.doy.includes(id)) trade.doy.push(id); moverALista(el, "doy", id, b); repintarTrades(); }));
     if ($("#limpiarTrade")) $("#limpiarTrade").onclick = () => { trade.doy = []; trade.recibo = []; render.trades(); };
     const guardarT = (hecho) => {
       SY.estado.trades.unshift({ id: "t" + Date.now(), doy: trade.doy.slice(), recibo: trade.recibo.slice(), nota: $("#notaTrade").value.trim(), fecha: new Date().toISOString().slice(0, 10), hecho: hecho ? SEM : undefined });
@@ -1382,13 +1399,21 @@
       const t = SY.estado.trades.find((z) => z.id === inp.dataset.tnota);
       if (t) { t.nota = inp.value.trim(); SY.guardar(); }
     }));
-    if ($("#otroEquipo")) $("#otroEquipo").onchange = (e) => {
-      const eq = D.liga.equipos.find((x) => String(x.id) === e.target.value);
-      $("#chipsOtro").innerHTML = eq ? eq.jugadores.filter((id) => M.porId[id] && !trade.recibo.includes(id)).map((id) => chipJ(id, `data-id="${id}"`)).join("") : "";
-      $("#chipsOtro").querySelectorAll("button").forEach((b) => (b.onclick = () => { trade.recibo.push(b.dataset.id); render.trades(); }));
+    if ($("#otroEquipo")) $("#otroEquipo").onchange = (e) => { otroEq = e.target.value; $("#chipsOtro").innerHTML = chipsOtroHTML(); };
+    // Un solo manejador para los jugadores del otro equipo (sobrevive cuando se cambia la lista)
+    if ($("#chipsOtro")) $("#chipsOtro").onclick = (e) => {
+      const b = e.target.closest("button[data-id]"); if (!b) return;
+      const id = b.dataset.id; if (!trade.recibo.includes(id)) trade.recibo.push(id);
+      moverALista(el, "recibo", id, b); repintarTrades();
     };
     conectarTrades(el);
   };
+  function chipsOtroHTML() {
+    const eq = otroEq && D.liga ? D.liga.equipos.find((x) => String(x.id) === otroEq) : null;
+    if (!eq) return "";
+    const ids = eq.jugadores.filter((id) => M.porId[id] && !trade.recibo.includes(id));
+    return ids.length ? ids.map((id) => chipJ(id, `data-id="${id}"`)).join("") : `<span class="nota">Ya agregaste a todos sus jugadores.</span>`;
+  }
   function conectarTrades(el) {
     el.querySelectorAll("[data-vt]").forEach((b) => (b.onclick = () => { vistaTrades = b.dataset.vt; render.trades(); }));
     el.querySelectorAll("[data-pval]").forEach((b) => (b.onclick = () => { posValores = b.dataset.pval; render.trades(); }));
