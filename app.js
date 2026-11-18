@@ -29,6 +29,32 @@
   const ULTIMA = Math.min(M.ULTIMA_FANTASY, M.SEMANAS);
   const PLAYOFFS = M.cfg.playoffs;
   const nombrePos = (p) => (p === "DST" ? "D/ST" : p);
+  // Íconos de línea (mismo trazo en todos los teléfonos, en lugar de emojis)
+  const ICONOS = {
+    equipo: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+    calendario: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+    lista: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+    trade: '<path d="m8 3-4 4 4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>',
+    mercado: '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+    trofeo: '<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>',
+    tarea: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/>',
+    duda: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/>',
+    noticias: '<path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8V6Z"/>',
+    salud: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+    barras: '<path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/>',
+    diana: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+    buscar: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    gema: '<path d="M6 3h12l4 6-10 13L2 9Z"/><path d="M11 3 8 9l4 13 4-13-3-6M2 9h20"/>',
+    mas: '<circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/>',
+    menos: '<circle cx="12" cy="12" r="10"/><path d="M8 12h8"/>',
+    estrella: '<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>',
+    sube: '<path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/>',
+    baja: '<path d="m22 17-8.5-8.5-5 5L2 7"/><path d="M16 17h6v-6"/>',
+    das: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5M12 3v12"/>',
+    recibes: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/>',
+    ajuste: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
+  };
+  const ico = (n) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONOS[n] || ""}</svg>`;
   // Botón (?) con una explicación que se abre al tocarlo
   const ayuda = (texto) => `<button class="q" type="button" data-ayuda="${esc(texto)}" aria-label="Qué significa">?</button>`;
   const titulo = (t, explicacion, extra) => `<div class="tit"><h3>${t}${explicacion ? " " + ayuda(explicacion) : ""}</h3>${extra || ""}</div>`;
@@ -232,9 +258,14 @@
     }
     const t = $("#estadoEspn");
     if (t) {
-      t.className = "tag " + (D.fuenteEspn ? "verde" : "amar");
-      t.textContent = D.fuenteEspn ? "ESPN conectado" + (espnVivo ? " · al momento" : "") : "ESPN sin conexión";
-      t.title = D.fuenteEspn ? "Lesiones, proyecciones y % en ligas de ESPN" : "No se pudieron leer los datos de ESPN; se usan solo las estadísticas oficiales de la NFL.";
+      // Lo que importa es si tu liga está conectada; si faltan los datos generales de ESPN, se avisa aparte
+      t.className = "tag " + (D.liga ? "verde" : "amar");
+      t.textContent = D.liga ? "Liga conectada" : "Liga sin conectar";
+      t.title = (D.liga ? "Tu liga de ESPN está conectada. " : "Conecta tu liga de ESPN en la pestaña Liga. ") +
+        (D.fuenteEspn ? "Lesiones, proyecciones y % en ligas de ESPN al día" + (espnVivo ? " (al momento)." : ".") : "No se pudieron leer los datos de ESPN; se usan solo las estadísticas oficiales de la NFL.");
+      if (!D.fuenteEspn) t.textContent += " · sin datos de ESPN";
+      t.style.cursor = "pointer";
+      t.onclick = () => abrir("liga");
     }
   }
 
@@ -270,7 +301,7 @@
       g.style.top = r.bottom + window.scrollY + 6 + "px";
     }
     const ir = e.target.closest("[data-ir]");
-    if (ir) { e.preventDefault(); abrir(ir.dataset.ir); window.scrollTo(0, 0); }
+    if (ir) { e.preventDefault(); if (ir.dataset.vm) vistaMercado = ir.dataset.vm; abrir(ir.dataset.ir); window.scrollTo(0, 0); }
   });
 
   // ---------------- Cálculos compartidos (se guardan hasta que algo cambie) ----------------
@@ -542,7 +573,7 @@
     const alerta = (tipo, ico, html, id) => `<li class="al-${tipo} ${id ? "clic" : ""}" ${id ? `data-j="${id}"` : ""}><span class="al-ico" aria-hidden="true">${ico}</span><span>${html}</span></li>`;
     if (roster.length && semEquipo === SEM) alertasRoster().forEach(([tipo, ico, html, id]) => alertas.push(alerta(tipo, ico, html, id)));
     if (roster.length) al.titulares.forEach((t) => {
-      if (!t.id) { alertas.push(alerta("rojo", "➕", `<b>${t.slot}</b>: no tienes a nadie para este puesto. Busca en <a href="#" data-ir="objetivos">Mercado</a>.`)); return; }
+      if (!t.id) { alertas.push(alerta("rojo", "➕", `<b>${t.slot}</b>: no tienes a nadie para este puesto. Busca en <a href="#" data-ir="objetivos" data-vm="waivers">Mercado</a>.`)); return; }
       if (t.jugado) return; // ya jugó o está jugando: no hay nada que hacer
       const d = t.pr.disp, n = esc(M.porId[t.id].n);
       if (t.pr.bye) alertas.push(alerta("amar", "💤", `<b>${n}</b> descansa (bye) esta semana.`, t.id));
@@ -656,8 +687,7 @@
         <p class="nota">Con tu roster la página te dice a quién alinear, tu probabilidad de ganar cada semana y qué trades te convienen.</p>
         <div class="fila bv-btns"><a class="btn" href="#" data-ir="liga">🔗 Conectar mi liga de ESPN</a><a class="btn sec-b" href="#sec-alin" id="irAgregar">➕ Agregar jugadores a mano</a></div></div>`}
       <div id="envivo"></div>
-      <div class="grid2 bloque">
-        <div class="panel" id="sec-alin">${titulo(`Alineación recomendada · semana ${semEquipo}`, "Los titulares que más puntos proyectan esta semana. Proy = proyección del modelo (mezclada con la de ESPN cuando existe). Rango = de una semana mala a una buena (8 de cada 10 semanas caen ahí). 🔒 = su partido ya empezó: se muestran sus puntos reales, y si está de titular en ESPN ya no se puede sacar (o si está en la banca, ya no puede entrar).")}
+      <div class="panel bloque" id="sec-alin">${titulo(`Alineación recomendada · semana ${semEquipo}`, "Los titulares que más puntos proyectan esta semana. Proy = proyección del modelo (mezclada con la de ESPN cuando existe). Rango = de una semana mala a una buena (8 de cada 10 semanas caen ahí). 🔒 = su partido ya empezó: se muestran sus puntos reales, y si está de titular en ESPN ya no se puede sacar (o si está en la banca, ya no puede entrar).")}
           <div class="tabla-scroll"><table class="alin">
             <thead><tr><th>Puesto</th><th>Jugador</th><th class="ocultar-movil">Rival</th><th class="n">Proy</th><th class="n ocultar-movil">ESPN</th><th class="n ocultar-movil">Rango</th><th class="ocultar-movil">Estado</th><th></th></tr></thead>
             <tbody>${al.titulares.map((x) => filaAl(x)).join("")}
@@ -666,16 +696,15 @@
             ${irMio.length ? `<tr><td colspan="8" class="sep">Lista de lesionados (IR)</td></tr>${irMio.map(filaIR).join("")}` : ""}</tbody></table></div>
           ${ligaMia ? `<p class="nota" style="margin-top:8px">Tu roster viene de ESPN. Si hiciste un cambio allá, da clic en <b>⟳ Actualizar</b>.</p>` : `<div class="fila" style="margin-top:10px"><input type="text" id="agregar" list="listaJugadores" placeholder="Agregar jugador a mi equipo…" style="flex:1;min-width:200px">
             <button class="btn" id="btnAgregar">Agregar</button></div>`}
-        </div>
-        <div>
-          <div class="panel" id="comparador"></div>
-          <div class="panel" id="noticiasRoster">${titulo("📰 Noticias de tu roster", "Las notas más recientes de Rotowire (vía ESPN) sobre tus jugadores. Vienen en inglés; toca Traducir para verlas en español.")}<div class="vacio">${roster.length ? "Cargando noticias…" : "Agrega jugadores para ver sus noticias."}</div></div>
-        </div>
       </div>
-      ${roster.length ? `<div class="panel bloque" id="sec-ir">${titulo("🏥 Roster e IR", "Tu liga tiene un máximo de jugadores (titulares + banca) y lugares aparte para la lista de lesionados (IR). Los de IR no cuentan contra el máximo, pero para sacar a alguien de IR necesitas un lugar libre, así que muchas veces hay que soltar a alguien. ESPN deja poner en IR a quien está Fuera (O), en la lista de lesionados de la NFL o suspendido. Si alguien en tu IR ya está sano, ESPN no te deja hacer movimientos hasta que lo actives.")}<div class="ir-cuerpo"><div class="vacio">Revisando tu roster…</div></div></div>` : ""}
+      <div class="grid2 bloque">
+          <div class="panel" id="comparador"></div>
+          <div class="panel" id="noticiasRoster">${titulo(ico("noticias") + "Noticias de tu roster", "Las notas más recientes de Rotowire (vía ESPN) sobre tus jugadores. Vienen en inglés; toca Traducir para verlas en español.")}<div class="vacio">${roster.length ? "Cargando noticias…" : "Agrega jugadores para ver sus noticias."}</div></div>
+      </div>
+      ${roster.length ? `<div class="panel bloque" id="sec-ir">${titulo(ico("salud") + "Roster e IR", "Tu liga tiene un máximo de jugadores (titulares + banca) y lugares aparte para la lista de lesionados (IR). Los de IR no cuentan contra el máximo, pero para sacar a alguien de IR necesitas un lugar libre, así que muchas veces hay que soltar a alguien. ESPN deja poner en IR a quien está Fuera (O), en la lista de lesionados de la NFL o suspendido. Si alguien en tu IR ya está sano, ESPN no te deja hacer movimientos hasta que lo actives.")}<div class="ir-cuerpo"><div class="vacio">Revisando tu roster…</div></div></div>` : ""}
       <div class="grid2 bloque">
         <div class="panel" id="sec-graf">${titulo("Proyección de tu alineación por semana", "Barra = puntos proyectados de tu mejor alineación cada semana. La línea muestra el rango de semana mala a buena. Las semanas sombreadas son los playoffs de fantasy. Abajo se marca cuántos de tus jugadores descansan (bye).")}${graficaSVG(resto)}</div>
-        <div class="panel" id="sec-fuerza">${titulo("💪 Fuerza por posición (resto de temporada)", `Tus titulares contra el titular promedio de una liga de ${M.cfg.equipos} equipos. Las posiciones débiles son las que conviene reforzar con un trade o waivers.`)}
+        <div class="panel" id="sec-fuerza">${titulo(ico("barras") + "Fuerza por posición (resto de temporada)", `Tus titulares contra el titular promedio de una liga de ${M.cfg.equipos} equipos. Las posiciones débiles son las que conviene reforzar con un trade o waivers.`)}
           <div class="fuerza">${fuerza}</div><p class="nota">La rayita marca al titular promedio de la liga; el número son tus puntos por semana en esa posición.</p></div>
       </div>
       ${roster.length ? decisionesHTML() : ""}`;
@@ -723,7 +752,7 @@
       <ul class="lista-cambios">${cambios.map((c) => `<li><span class="bueno">▲ ${nom(c.entra)}</span>${c.sale ? ` en lugar de <span class="malo">${nom(c.sale)}</span>` : ""} <span class="nota">${c.gana >= 0 ? "+" : ""}${f1(c.gana)}</span></li>`).join("")}</ul>`;
     else if (cambios) alin = `<b>Tu alineación en ESPN ya es la mejor.</b> Proyecta ${f1(al.pts)} pts.`;
     else alin = `<b>Alinea a tus ${al.titulares.filter((x) => x.id).length} titulares recomendados</b> (${f1(al.pts)} pts). <a href="#sec-alin">Ver alineación</a>`;
-    return `<div class="panel esta-semana">${titulo(`📌 Esta semana (${SEM})`, "Lo que conviene hacer antes de los partidos. Se calcula con tu roster de ESPN y las proyecciones de la semana.")}
+    return `<div class="panel esta-semana">${titulo(ico("tarea") + `Esta semana (${SEM})`, "Lo que conviene hacer antes de los partidos. Se calcula con tu roster de ESPN y las proyecciones de la semana.")}
       <ol class="es-lista">
         <li><span class="es-ico" aria-hidden="true">📋</span><div>${alin}${alertas.length ? `<ul class="lista-al">${alertas.slice(0, 3).join("")}</ul>${alertas.length > 3 ? `<details class="detalles"><summary>Ver ${alertas.length - 3} avisos más</summary><ul class="lista-al">${alertas.slice(3).join("")}</ul></details>` : ""}` : ""}</div></li>
         <li><span class="es-ico" aria-hidden="true">➕</span><div id="esWaiver" class="nota">Buscando la mejor adición…</div></li>
@@ -742,7 +771,7 @@
       ew.classList.remove("nota");
       const bloqueo = cache.waivers.pl.ilegales.length ? ` <span class="malo">Antes activa a ${cache.waivers.pl.ilegales.map((id) => esc(M.porId[id].n)).join(" y ")} de tu IR: ESPN no te deja agregar hasta entonces.</span>` : "";
       ew.innerHTML = w ? `<b>Agrega a <a href="#" data-j="${w.add}">${esc(M.porId[w.add].n)}</a></b> ${quienSale(w)}: +${f1(w.gana / sem)} pts por semana.${bloqueo}
-        ${M.cfg.faab ? `<span class="nota">Oferta sugerida: $${ofertaFaab(w.gana / sem)}.</span>` : ""} <a href="#" data-ir="objetivos">Más opciones</a>`
+        ${M.cfg.faab ? `<span class="nota">Oferta sugerida: $${ofertaFaab(w.gana / sem)}.</span>` : ""} <a href="#" data-ir="objetivos" data-vm="waivers">Más opciones</a>`
         : `<span class="nota">Nadie libre mejora tu equipo ahora mismo.</span>`;
       const s = cache.sugerencias[0];
       et.classList.remove("nota");
@@ -806,7 +835,7 @@
         <td class="n ${r.real >= 0 ? "bueno" : "malo"} fuerte">${r.semanas ? (r.real >= 0 ? "+" : "") + f1(r.real) : "aún no se juega"}</td><td class="n ${r.resto >= 0 ? "bueno" : "malo"}">${(r.resto >= 0 ? "+" : "") + f0(r.resto)}</td></tr>`; }).join("")}
       </tbody></table></div><p class="nota">Puntos de los jugadores que recibiste menos los que diste, sin importar si los alineaste.</p>` :
       `<p class="nota" style="margin-top:8px">Cuando hagas un trade, márcalo con <b>Ya lo hice</b> en la pestaña Trades para seguir si te convino.</p>`;
-    return `<div class="panel bloque" id="sec-decisiones">${titulo("🎯 Tus decisiones", "Compara lo que alineaste en ESPN contra la alineación recomendada y contra la mejor posible con los puntos que de verdad hicieron tus jugadores. Tu alineación de cada semana se guarda sola (en tu cuenta si iniciaste sesión) cuando abres la página.")}${res}${tr}</div>`;
+    return `<div class="panel bloque" id="sec-decisiones">${titulo(ico("diana") + "Tus decisiones", "Compara lo que alineaste en ESPN contra la alineación recomendada y contra la mejor posible con los puntos que de verdad hicieron tus jugadores. Tu alineación de cada semana se guarda sola (en tu cuenta si iniciaste sesión) cuando abres la página.")}${res}${tr}</div>`;
   }
 
   // ¿A quién alineo?
@@ -832,7 +861,7 @@
       <p class="veredicto-c">✅ Alinea a <b>${esc(M.porId[mejor.id].n)}</b>: hace más puntos que ${comparar.length === 2 ? "el otro" : "los demás"} en ${pct(mejor.pMejor)} de las simulaciones.</p>`;
     }
     const sugeridos = roster.filter((id) => !comparar.includes(id) && ["RB", "WR", "TE", "QB"].includes(M.porId[id].pos)).slice(0, 12);
-    el.innerHTML = `${titulo("🤔 ¿A quién alineo?", "Compara de 2 a 4 jugadores para esta semana: proyección, rango, qué tan fácil es su rival para su posición y el clima. Simulamos la semana miles de veces para ver quién hace más puntos.")}
+    el.innerHTML = `${titulo(ico("duda") + "¿A quién alineo?", "Compara de 2 a 4 jugadores para esta semana: proyección, rango, qué tan fácil es su rival para su posición y el clima. Simulamos la semana miles de veces para ver quién hace más puntos.")}
       <div class="chips">${comparar.map((id) => `<span class="chip">${avatar(M.porId[id])}${esc(M.porId[id].n)} <button class="x" data-cquitar="${id}" aria-label="Quitar">×</button></span>`).join("")}</div>
       ${comparar.length < 4 ? `<div class="fila" style="gap:8px;margin:8px 0"><input type="text" id="compIn" list="listaJugadores" placeholder="Agregar jugador a comparar…" style="flex:1;min-width:160px"><button class="btn" id="compAdd">Agregar</button></div>` : ""}
       ${sugeridos.length && comparar.length < 4 ? `<div class="nota">De tu equipo:</div><div class="chips chips-j">${sugeridos.map((id) => chipJ(id, `data-cadd="${id}"`)).join("")}</div>` : ""}
@@ -861,7 +890,7 @@
       const cuerpo = items.length ? `<ul class="noticias">${items.map((x) => `<li><div class="fila entre" style="gap:6px"><span class="clic" data-j="${x.j.id}"><b>${esc(x.j.n)}</b> <span class="nota">${esc(x.j.t)}</span></span><span class="nota">${haceCuanto(x.n.fecha)}</span></div>
           <div>${esc(x.n.titular)}</div><div class="nota">${esc(x.n.historia.slice(0, 220))}${x.n.historia.length > 220 ? "…" : ""} <a href="${traducir(x.n.titular + " " + x.n.historia)}" target="_blank" rel="noopener">Traducir</a></div></li>`).join("")}</ul>` :
         `<div class="vacio">${pendientes.length ? "Cargando noticias…" : "No encontré noticias recientes de tus jugadores."}</div>`;
-      el.innerHTML = titulo("📰 Noticias de tu roster", "Las notas más recientes de Rotowire (vía ESPN) sobre tus jugadores. Vienen en inglés; toca Traducir para verlas en español.") + cuerpo;
+      el.innerHTML = titulo(ico("noticias") + "Noticias de tu roster", "Las notas más recientes de Rotowire (vía ESPN) sobre tus jugadores. Vienen en inglés; toca Traducir para verlas en español.") + cuerpo;
       conectarClics(el);
     };
     dibujar();
@@ -876,7 +905,7 @@
   render.partidos = function () {
     const el = $("#tab-partidos");
     cargarClima(semPartidos);
-    const pest = `<div class="seg">${[["juegos", "Partidos"], ["dvp", "Defensa vs. posición"], ["precision", "Qué tan bien predice"]].map(([k, t]) => `<button class="${vistaPartidos === k ? "on" : ""}" data-vp="${k}">${t}</button>`).join("")}</div>`;
+    const pest = `<div class="seg">${[["juegos", "Partidos"], ["dvp", "Defensas"], ["precision", "Precisión"]].map(([k, t]) => `<button class="${vistaPartidos === k ? "on" : ""}" data-vp="${k}">${t}</button>`).join("")}</div>`;
     let cuerpo = "";
     if (vistaPartidos === "juegos") cuerpo = vistaJuegos();
     else if (vistaPartidos === "dvp") cuerpo = vistaDvp();
@@ -922,7 +951,7 @@
           <div class="eq ${pH < 0.5 ? "gana" : ""}">${logo(g.away, "mediano")}<span>${esc(M.EQUIPOS[g.away])}</span></div><div class="pt ${pH < 0.5 ? "gana" : ""}">${f0(pa)}</div>
           <div class="eq ${pH >= 0.5 ? "gana" : ""}">${logo(g.home, "mediano")}<span><span class="nota">@</span> ${esc(M.EQUIPOS[g.home])}</span></div><div class="pt ${pH >= 0.5 ? "gana" : ""}">${f0(ph)}</div>
         </div>
-        <div class="prob"><i style="width:${(1 - pH) * 100}%;background:${colorEq(g.away)}"></i><i style="width:${pH * 100}%;background:${colorEq(g.home)}"></i></div>
+        <div class="prob"><i style="width:${(1 - pH) * 100}%;background:${pH < 0.5 ? "var(--acento)" : "var(--gris-barra)"}"></i><i style="width:${pH * 100}%;background:${pH >= 0.5 ? "var(--acento)" : "var(--gris-barra)"}"></i></div>
         <div class="fila entre mini"><span>${g.away} ${Math.round((1 - pH) * 100)}%</span><span class="favorito">${logo(favorito, "chico")}<b>Gana ${favorito}</b> (${p}%)</span><span>${g.home} ${Math.round(pH * 100)}%</span></div>
         ${!g.jugado && climaTag(g) ? `<div style="margin-top:6px">${climaTag(g)}</div>` : ""}
         ${mios.length ? `<div class="mini mios" style="margin-top:6px">⭐ Tus jugadores: ${mios.map(esc).join(", ")}</div>` : ""}
@@ -1012,7 +1041,7 @@
     const cambios = A ? Object.keys(A.par || {}).filter((k) => nombresPar[k] && A.par[k] !== P0[k]) : [];
     const pr = (A && A.pruebas) || {};
     const mejora = (x, inv) => x && x.antes && x.despues !== undefined ? (inv ? `${pct(x.antes)} → <b>${pct(x.despues)}</b>` : `${f2(x.antes)} → <b>${f2(x.despues)}</b>`) : "–";
-    const ajusteHTML = !A ? "" : `<div class="panel bloque">${titulo("🔧 Ajuste automático", "Cada día, después de bajar las estadísticas, se vuelve a correr el modelo semana por semana con otras combinaciones de sus parámetros y se compara contra lo que de verdad pasó. Si una combinación se equivoca menos (al menos 1% menos), la página la usa desde ese momento. Con pocas semanas jugadas casi no cambia nada, para no perseguir la suerte.")}
+    const ajusteHTML = !A ? "" : `<div class="panel bloque">${titulo(ico("ajuste") + "Ajuste automático", "Cada día, después de bajar las estadísticas, se vuelve a correr el modelo semana por semana con otras combinaciones de sus parámetros y se compara contra lo que de verdad pasó. Si una combinación se equivoca menos (al menos 1% menos), la página la usa desde ese momento. Con pocas semanas jugadas casi no cambia nada, para no perseguir la suerte.")}
       <p>${A.semanas < 3 ? esc(A.nota || "Todavía hay pocas semanas para ajustar.") : cambios.length ? `Con ${A.semanas} semanas probadas, el modelo cambió: ${cambios.map((k) => `<b>${nombresPar[k]}</b> ${f2(P0[k])} → ${f2(A.par[k])}`).join(" · ")}.` : `Con ${A.semanas} semanas probadas, los valores actuales ya son los que menos se equivocan.`}</p>
       <table class="mini"><tbody>
         <tr><td>Error por jugador (pts)</td><td class="n">${mejora(pr.jugadores)}</td></tr>
@@ -1076,7 +1105,7 @@
         <tbody>${filas.map((x) => `<tr class="clic" data-j="${x.j.id}">
           <td class="c-jug">${jugHTML(x.j, (enRoster(x.j.id) ? "⭐ tuyo" : duenoDe[x.j.id] ? esc(duenoDe[x.j.id].abrev || duenoDe[x.j.id].nombre) : "")) + tSl(x.j)}${estadoTag(x.sem) ? `<div class="solo-movil">${estadoTag(x.sem)}</div>` : ""}</td>
           <td class="n" data-l="Rk">${nombrePos(x.j.pos)}${x.rankPos}</td><td class="n ocultar-movil">${f1(x.ppg)}</td><td class="n ocultar-movil">${f1(x.ultimas3)}</td>
-          <td class="n fuerte" data-l="Proy S${SEM}">${x.sem.bye ? "BYE" : f1(x.sem.pts)}</td><td class="n" data-l="Resto">${f0(x.ros)}</td><td class="n ocultar-movil">${f0(x.playoffs)}</td>
+          <td class="n fuerte" data-l="Proy">${x.sem.bye ? "BYE" : f1(x.sem.pts)}</td><td class="n" data-l="Resto">${f0(x.ros)}</td><td class="n ocultar-movil">${f0(x.playoffs)}</td>
           <td class="n" data-l="Valor"><div class="fila" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap"><div class="barra" style="width:50px"><i style="width:${x.valor}%;background:${x.valor >= 60 ? "var(--acento)" : x.valor >= 25 ? "var(--barra)" : "var(--suave)"}"></i></div>${x.valor}</div></td>
           <td class="n" data-l="Tend.">${tendenciaHTML(x)}</td>
           <td class="n ocultar-movil">${x.j.espn ? f0(x.j.espn.own) + "%" : "–"}</td>
@@ -1320,7 +1349,7 @@
         Playoffs de fantasy (semanas ${PLAYOFFS.join(", ")}): das ${f0(playD)} pts proyectados y recibes ${f0(playR)}.</p></div>`;
     }
     el.innerHTML = `${pest}<h2>Analizar un trade ${ayuda("Si das jugadores de tu equipo, el veredicto es cuántos puntos por semana gana o pierde tu mejor alineación de aquí al final de la temporada. Si no, compara el valor de cada lado (lo que aportará cada jugador por encima de uno de waivers).")}</h2>
-      <div class="lados bloque">${lado("doy", "📤 Tú das")}${lado("recibo", "📥 Tú recibes")}</div>${res}
+      <div class="lados bloque">${lado("doy", ico("das") + " Tú das")}${lado("recibo", ico("recibes") + " Tú recibes")}</div>${res}
       ${trade.doy.length || trade.recibo.length ? `<div class="fila" style="margin-top:12px">
         ${trade.doy.length && trade.recibo.length ? `<input type="text" id="notaTrade" placeholder="Nota: con quién, qué te contestaron…" style="flex:1;min-width:200px"><button class="btn" id="guardarTrade">Guardar trade</button><button class="sec" id="tradeHecho" title="Guárdalo como hecho para seguir si te convino">Ya lo hice</button>` : ""}
         <button class="sec" id="limpiarTrade">Limpiar</button></div>` : ""}
@@ -1505,7 +1534,7 @@
     const est = (id) => esc(M.elegibleIR(M.porId[id]) || "");
     const txt = {
       activar: (x) => ["rojo", "🚨", `${n(x.id)} ya no está lesionado y sigue en IR. ESPN no te deja agregar ni hacer cambios hasta que lo actives. ${x.soltar ? `Tu roster está lleno: para activarlo suelta a ${sl(x.soltar)}.` : x.por ? `Intercámbialo por ${n(x.por)}: ${n(x.por)} entra a IR y ${n(x.id)} pasa a tu banca, sin soltar a nadie.` : "Tienes lugar: solo actívalo."}`],
-      mover: (x) => ["verde", "🏥", x.conActivar ? `Mueve a ${n(x.id)} (${est(x.id)}) a IR en lugar de ${n(x.conActivar)} (ver arriba).` : `Mueve a ${n(x.id)} (${est(x.id)}) a IR. Te libera un lugar en la banca sin soltar a nadie; úsalo para agregar a alguien de <a href="#" data-ir="objetivos">waivers</a>.`],
+      mover: (x) => ["verde", "🏥", x.conActivar ? `Mueve a ${n(x.id)} (${est(x.id)}) a IR en lugar de ${n(x.conActivar)} (ver arriba).` : `Mueve a ${n(x.id)} (${est(x.id)}) a IR. Te libera un lugar en la banca sin soltar a nadie; úsalo para agregar a alguien de <a href="#" data-ir="objetivos" data-vm="waivers">waivers</a>.`],
       cambiarIR: (x) => ["amar", "🔄", `${n(x.id)} (${est(x.id)}) puede ir a IR, pero tu IR está lleno con ${n(x.sale)}, que vale menos lo que resta. Suelta a ${n(x.sale)} y mete a ${n(x.id)} a IR${x.conActivar ? ` (así también tienes lugar para activar a ${n(x.conActivar)})` : ""}.`],
       soltarLesionado: (x) => ["amar", "✂️", `${n(x.id)} (${est(x.id)}) ocupa un lugar en tu banca, tu IR está lleno y casi no te aporta (${f1(x.ap)} pts/sem). Puedes soltarlo para agregar a alguien.`],
       banca: (x) => ["gris", "🩹", `${n(x.id)} (${est(x.id)}) puede ir a IR, pero tu IR está lleno. Consérvalo en la banca: te aporta ${f1(x.ap)} pts/sem cuando regrese.`],
@@ -1526,10 +1555,10 @@
   }
   function calcularSugerencias() {
     const base = M.puntosRestoTemporada(roster);
-    const mios = roster.filter((id) => M.porId[id].fila.valor > 0);
+    const mios = roster.filter((id) => M.porId[id].fila.valor > 0 && !["K", "DST"].includes(M.porId[id].pos));
     const combos = [];
     mios.forEach((a, i) => { combos.push([a]); mios.slice(i + 1).forEach((b) => combos.push([a, b])); });
-    const objetivos = M.tabla.filter((x) => !enRoster(x.j.id) && x.valor >= 8 && x.j.pos !== "K" && (!D.liga || duenoDe[x.j.id])).slice(0, 70);
+    const objetivos = M.tabla.filter((x) => !enRoster(x.j.id) && x.valor >= 8 && x.j.pos !== "K" && x.j.pos !== "DST" && (!D.liga || duenoDe[x.j.id])).slice(0, 70); // D/ST y K se consiguen en waivers
     const out = [];
     objetivos.forEach((t) => {
       let mejor = null;
@@ -1698,6 +1727,8 @@
 
   let vistaGemas = "semana";
   let posCalendario = "OF";
+  let vistaMercado = leer("nflf_vm") || "trades";
+  const masMercado = {};
   render.objetivos = function () {
     const el = $("#tab-objetivos");
     const semanas = Math.max(1, ULTIMA - SEM + 1);
@@ -1712,25 +1743,39 @@
     const filaLista = (x, razon) => `<tr class="clic" data-j="${x.j.id}"><td>${jugHTML(x.j, duenoDe[x.j.id] && !enRoster(x.j.id) ? esc(duenoDe[x.j.id].nombre) : "")}
       ${razon ? `<div class="nota" style="margin:3px 0 0 42px">${razon}</div>` : ""}</td>
       <td class="n">${f1(x.ppg)}</td><td class="n fuerte">${f1(x.rosPG)}</td><td class="n">${x.valor}</td></tr>`;
-    const tablaLista = (filas, fn, vacio) => filas.length ? `<div class="tabla-scroll"><table class="mini"><thead><tr><th>Jugador</th><th class="n">Pts/PJ</th><th class="n">Proy/PJ</th><th class="n">Valor</th></tr></thead><tbody>${filas.map(fn).join("")}</tbody></table></div>` : `<div class="vacio">${vacio || "Nadie cumple el criterio ahora."}</div>`;
+    const tablaLista = (filas, fn, vacio, clave) => filas.length ? `<div class="tabla-scroll"><table class="mini"><thead><tr><th>Jugador</th><th class="n">Pts/PJ</th><th class="n">Proy/PJ</th><th class="n">Valor</th></tr></thead><tbody>${(clave ? verMas(clave, filas) : filas).map(fn).join("")}</tbody></table></div>${clave ? botonMas(clave, filas.length) : ""}` : `<div class="vacio">${vacio || "Nadie cumple el criterio ahora."}</div>`;
     const necesitaRoster = `<div class="vacio">Primero agrega tu roster en <a href="#" data-ir="equipo">Mi equipo</a> o conecta tu liga en <a href="#" data-ir="liga">Liga</a>.</div>`;
 
+    // Listas cortas: 5 filas y un botón para ver el resto
+    const verMas = (k, arr) => (masMercado[k] ? arr : arr.slice(0, 5));
+    const botonMas = (k, n) => (n > 5 ? `<button class="sec ver-mas" type="button" data-mas="${k}">${masMercado[k] ? "Ver menos" : `Ver ${n - 5} más`}</button>` : "");
+    // Si para agregar a cualquiera basta lo mismo (mover a alguien a IR, o hay lugar), se dice una sola vez
+    const W0 = cache.waivers;
+    let avisoComun = "";
+    if (W0 && W0.agregar.length && W0.agregar.every((w) => !w.drop)) {
+      const irs = [...new Set(W0.agregar.map((w) => w.ir || ""))];
+      if (irs.length === 1) avisoComun = irs[0]
+        ? `<p class="aviso-comun">Para agregar a cualquiera de estos, mueve a <span class="clic enlace" data-j="${irs[0]}">${esc(M.porId[irs[0]].n)}</span> a IR: no tienes que soltar a nadie.</p>`
+        : `<p class="aviso-comun">Tienes lugar en tu roster: no tienes que soltar a nadie.</p>`;
+    }
     let sug = `<div class="vacio">Calculando…</div>`;
     if (sinRoster) sug = necesitaRoster;
     else if (cache.sugerencias) {
       const S = cache.sugerencias;
-      sug = S.length ? `<div class="tabla-scroll"><table><thead><tr><th>Pide</th><th>Ofrece</th><th class="n">Valor (das / recibes)</th><th class="n">Tu alineación</th><th></th></tr></thead><tbody>${S.map((s, i) => {
+      sug = S.length ? `<ul class="ofertas">${verMas("trades", S).map((s, i) => {
         const t = M.porId[s.objetivo];
-        return `<tr><td class="clic" data-j="${t.id}">${jugHTML(t, duenoDe[t.id] ? esc(duenoDe[t.id].nombre) : "")}</td>
-          <td>${s.doy.map((id) => `<div class="clic" data-j="${id}">${jugHTML(M.porId[id])}</div>`).join("")}</td>
-          <td class="n">${f0(s.vD)} / ${f0(s.vR)}</td><td class="n bueno fuerte">+${f1(s.gana / semanas)} pts/sem</td>
-          <td><button class="sec" data-prueba="${i}">Analizar</button></td></tr>`;
-      }).join("")}</tbody></table></div>` : `<div class="vacio">No encontré trades de valor parecido que mejoren tu alineación de forma clara.</div>`;
+        return `<li class="oferta">
+          <div class="of-top"><div class="of-lado"><div class="of-et">Pides</div><div class="clic" data-j="${t.id}">${jugHTML(t, duenoDe[t.id] ? esc(duenoDe[t.id].nombre) : "")}</div></div>
+            <div class="of-gana"><b>+${f1(s.gana / semanas)}</b><span>pts/sem</span></div></div>
+          <div class="of-et">Ofreces</div>
+          <div class="of-da">${s.doy.map((id) => `<div class="clic" data-j="${id}">${jugHTML(M.porId[id])}</div>`).join("")}</div>
+          <div class="of-pie"><span class="nota">Valor: das ${f0(s.vD)} · recibes ${f0(s.vR)}</span><button class="sec" data-prueba="${i}">Analizar</button></div></li>`;
+      }).join("")}</ul>${botonMas("trades", S.length)}` : `<div class="vacio">No encontré trades de valor parecido que mejoren tu alineación de forma clara.</div>`;
     }
     const W = cache.waivers;
     const necesidades = necesidadesLiga();
     const posTag = (p, a, bien) => `<span class="pos ${p}" title="${bien ? "Le sobra" : "Le falta"}: titulares al ${Math.round(a[p].ratio * 100)}% del promedio">${p}</span>`;
-    const necesHTML = D.liga ? `<div class="panel bloque">${titulo("🔁 Qué necesita cada equipo", "Compara los titulares de cada equipo contra el promedio de la liga. Necesita = posiciones donde está débil (ahí le interesa recibir). Le sobra = suplentes que serían titulares en otro equipo (ahí te puede dar). La idea de trade usa lo que a ti te sobra.")}
+    const necesHTML = D.liga ? `<div class="panel bloque">${titulo(ico("buscar") + "Qué necesita cada equipo", "Compara los titulares de cada equipo contra el promedio de la liga. Necesita = posiciones donde está débil (ahí le interesa recibir). Le sobra = suplentes que serían titulares en otro equipo (ahí te puede dar). La idea de trade usa lo que a ti te sobra.")}
         <div class="tabla-scroll"><table class="mini"><thead><tr><th>Equipo</th><th>Récord</th><th>Necesita</th><th>Le sobra</th><th>Idea de trade</th><th></th></tr></thead><tbody>
         ${necesidades.map((x, i) => `<tr><td><b>${esc(x.e.nombre)}</b><div class="nota">${esc(x.e.dueno || "")}</div></td>
           <td>${esc(x.e.record || "")}</td>
@@ -1738,7 +1783,7 @@
           <td>${x.sobra.length ? x.sobra.map((p) => posTag(p, x.a, true)).join(" ") : '<span class="nota">—</span>'}</td>
           <td>${x.idea ? `<div class="clic" data-j="${x.idea.doy}">Das: ${jugHTML(M.porId[x.idea.doy])}</div><div class="clic" data-j="${x.idea.recibo}">Pides: ${jugHTML(M.porId[x.idea.recibo])}</div>` : '<span class="nota">Sin un cambio claro con tu roster</span>'}</td>
           <td>${x.idea ? `<button class="sec" data-nidea="${i}">Analizar</button>` : ""}</td></tr>`).join("")}
-        </tbody></table></div></div>` : `<div class="panel bloque">${titulo("🔁 Qué necesita cada equipo")}<p class="nota">Conecta tu liga de ESPN (pestaña <a href="#" data-ir="liga">Liga</a>) para ver qué posiciones le faltan a cada equipo y a quién proponerle un trade.</p></div>`;
+        </tbody></table></div></div>` : `<div class="panel bloque">${titulo(ico("buscar") + "Qué necesita cada equipo")}<p class="nota">Conecta tu liga de ESPN (pestaña <a href="#" data-ir="liga">Liga</a>) para ver qué posiciones le faltan a cada equipo y a quién proponerle un trade.</p></div>`;
     const fa = M.cfg.faab;
     const queda = fa && ligaMia ? Math.max(0, fa.presupuesto - (ligaMia.faabGastado || 0)) : null;
     const tSl = (j) => (sleeper && j.sl && sleeper.alta[j.sl] ? `<span class="tag verde" title="Agregado ${sleeper.alta[j.sl].toLocaleString("es-MX")} veces en Sleeper en las últimas 24 h">🔥 ${sleeper.alta[j.sl] >= 1000 ? Math.round(sleeper.alta[j.sl] / 1000) + " mil" : sleeper.alta[j.sl]}</span>` : "");
@@ -1755,28 +1800,35 @@
           <div class="gema-tags">${quien} <span class="tag gris">Valor ${g.x.valor}</span> ${tSl(j)}${g.dueno ? ` <button class="sec chico-b" data-gtrade="${j.id}">Armar trade</button>` : ""}</div>
           <ul class="gema-razones">${r.razones.slice(0, 3).map((t) => `<li>${esc(t)}</li>`).join("")}</ul></li>`;
       }).join("");
-      return `<div class="panel">${titulo("💎 Gemas baratas", "Jugadores de valor bajo (20 o menos) que nadie tiene en tu liga o que puedes pedir barato en un trade, con potencial por la baja de un titular de su equipo, más snaps o toques en sus últimos partidos, un rival fácil o por ser el suplente directo de un RB titular (si él se lesiona, se queda con el puesto). Waiver = libre; Trade = tiene dueño.")}
+      return `<div class="panel">${titulo(ico("gema") + "Gemas baratas", "Jugadores de valor bajo (20 o menos) que nadie tiene en tu liga o que puedes pedir barato en un trade, con potencial por la baja de un titular de su equipo, más snaps o toques en sus últimos partidos, un rival fácil o por ser el suplente directo de un RB titular (si él se lesiona, se queda con el puesto). Waiver = libre; Trade = tiene dueño.")}
         <div class="seg">${[["semana", `Semana ${SEM}`], ["ros", "Resto de la temporada"]].map(([k, t]) => `<button class="${vistaGemas === k ? "on" : ""}" data-vg="${k}">${t}</button>`).join("")}</div>
         ${filas ? `<ul class="gemas">${filas}</ul>` : `<div class="vacio">No encontré gemas claras ${vistaGemas === "ros" ? "para lo que resta" : "para esta semana"}.</div>`}</div>`;
     };
-    el.innerHTML = `<h2>Mercado: compra, vende, agrega y suelta ${ayuda("Proy/PJ = puntos por partido que el modelo espera el resto de la temporada. Cuando es mucho mayor que lo que ha hecho (Pts/PJ), es buen momento para pedirlo; cuando es menor, es buen momento para venderlo.")}</h2>
-      <div class="panel bloque">${titulo("Trades recomendados para tu equipo", `Ofertas de valor parecido (que el otro equipo podría aceptar) que más puntos por semana le suman a tu alineación.${D.liga ? "" : " Como tu liga no está conectada, puede sugerir jugadores que nadie tiene."}`)}${sug}</div>
-      ${necesHTML}
-      <div class="grid2 anchas bloque">
-        ${gemasHTML()}
-        <div class="panel">${titulo("➕ Agregar de waivers", `${D.liga ? "Jugadores que nadie tiene en tu liga" : "Jugadores en pocas ligas de ESPN (conecta tu liga para ver solo los libres de verdad)"}, ordenados por cuántos puntos le suman a tu alineación lo que resta de la temporada, y a quién soltarías.${fa ? " La oferta FAAB sugerida depende de cuánto te suma y de lo que te queda de presupuesto." : ""} 🔥 = de los más agregados hoy en Sleeper.`)}
+    // Mercado dividido en pestañas para no tener 9 secciones una debajo de otra
+    const PEST_M = [["trades", "Trades"], ["waivers", "Waivers"], ["gemas", "Gemas"], ["compraventa", "Compra/venta"], ["calendario", "Calendario"]];
+    if (!PEST_M.some(([k]) => k === vistaMercado)) vistaMercado = "trades";
+    const secciones = {
+      trades: () => `<div class="panel bloque">${titulo("Trades recomendados para tu equipo", `Ofertas de valor parecido (que el otro equipo podría aceptar) que más puntos por semana le suman a tu alineación.${D.liga ? "" : " Como tu liga no está conectada, puede sugerir jugadores que nadie tiene."}`)}${sug}</div>
+      ${necesHTML}`,
+      waivers: () => `<div class="grid2 anchas bloque">
+        <div class="panel">${titulo(ico("mas") + "Agregar de waivers", `${D.liga ? "Jugadores que nadie tiene en tu liga" : "Jugadores en pocas ligas de ESPN (conecta tu liga para ver solo los libres de verdad)"}, ordenados por cuántos puntos le suman a tu alineación lo que resta de la temporada, y a quién soltarías.${fa ? " La oferta FAAB sugerida depende de cuánto te suma y de lo que te queda de presupuesto." : ""} 🔥 = de los más agregados hoy en Sleeper.`)}
           ${fa && queda !== null ? `<p class="nota">Te quedan <b>$${queda}</b> de $${fa.presupuesto} de FAAB.</p>` : ""}
           ${W && W.pl.sabe ? `<p class="nota">Roster: <b>${W.pl.activos} de ${W.pl.max}</b>${W.pl.libres ? ` · ${W.pl.libres} ${W.pl.libres === 1 ? "lugar libre" : "lugares libres"}` : " · lleno: para agregar hay que soltar"} · IR: ${W.pl.irUsados} de ${W.pl.irSlots}.${W.pl.ilegales.length ? ` <span class="malo">Activa primero a ${W.pl.ilegales.map((id) => esc(M.porId[id].n)).join(" y ")} de tu IR: ESPN no te deja agregar hasta entonces.</span>` : ""} <a href="#" data-ir="equipo">Ver Roster e IR</a></p>` : ""}
-          ${sinRoster ? necesitaRoster : W ? (W.agregar.length ? `<div class="tabla-scroll"><table class="mini"><thead><tr><th>Agrega</th><th>Suelta</th><th class="n">Gana</th>${fa ? `<th class="n">Oferta FAAB</th>` : ""}</tr></thead><tbody>${W.agregar.map((w) => { const of = ofertaFaab(w.gana / semanas); const j = M.porId[w.add]; return `<tr>
-            <td class="clic" data-j="${w.add}">${jugHTML(j, j.espn ? j.espn.own + "% ligas" : "")} ${tSl(j)}<div class="nota" style="margin-left:42px">Proy. semana ${SEM}: ${f1(j.fila.sem.pts)} · resto: ${f0(j.fila.ros)}</div></td>
-            ${w.drop ? `<td class="clic" data-j="${w.drop}">${jugHTML(M.porId[w.drop])}</td>` : w.ir ? `<td class="clic" data-j="${w.ir}">${jugHTML(M.porId[w.ir], "muévelo a IR")}</td>` : `<td class="nota">Nadie: tienes lugar</td>`}
-            <td class="n bueno fuerte">+${f1(w.gana / semanas)}<div class="nota">pts/sem</div></td>
-            ${fa ? `<td class="n fuerte">${of ? (of.max ? `$${of.min}–${of.max}` : "$0") : "–"}</td>` : ""}</tr>`; }).join("")}</tbody></table></div>` :
+          ${sinRoster ? necesitaRoster : W ? (W.agregar.length ? `${avisoComun}<ul class="ofertas">${verMas("waivers", W.agregar).map((w) => { const of = ofertaFaab(w.gana / semanas); const j = M.porId[w.add]; return `<li class="oferta">
+            <div class="of-top"><div class="of-lado clic" data-j="${w.add}">${jugHTML(j, j.espn ? j.espn.own + "% ligas" : "")} ${tSl(j)}</div>
+              <div class="of-gana"><b>+${f1(w.gana / semanas)}</b><span>pts/sem</span></div></div>
+            <div class="nota">Proyección semana ${SEM}: <b>${f1(j.fila.sem.pts)}</b> · resto: <b>${f0(j.fila.ros)}</b>${fa ? ` · FAAB sugerido: <b>${of ? (of.max ? `$${of.min}–${of.max}` : "$0") : "–"}</b>` : ""}</div>
+            ${w.drop ? `<div class="of-suelta">Suelta a <span class="clic enlace" data-j="${w.drop}">${esc(M.porId[w.drop].n)}</span> <span class="nota">${nombrePos(M.porId[w.drop].pos)} · ${esc(M.porId[w.drop].t)}</span></div>` : avisoComun ? "" : w.ir ? `<div class="of-suelta">Mueve a <span class="clic enlace" data-j="${w.ir}">${esc(M.porId[w.ir].n)}</span> a IR (no sueltas a nadie)</div>` : `<div class="of-suelta nota">Tienes lugar: no sueltas a nadie</div>`}</li>`; }).join("")}</ul>${botonMas("waivers", W.agregar.length)}` :
             `<div class="vacio">Ningún agente libre mejora tu alineación ahora mismo.</div>`) : `<div class="vacio">Calculando…</div>`}</div>
-        <div class="panel">${titulo("➖ Candidatos para soltar", "Los jugadores de tu roster que menos puntos le aportan a tu alineación lo que resta de la temporada (casi nunca serían titulares). No incluye a los de tu IR: soltarlos no te abre lugar en el roster.")}
-          ${sinRoster ? necesitaRoster : W ? (W.soltar.length ? `<div class="tabla-scroll"><table class="mini"><thead><tr><th>Jugador</th><th class="n">Aporta</th><th class="n">Valor</th></tr></thead><tbody>${W.soltar.map((w) => `<tr class="clic" data-j="${w.id}">
-            <td>${jugHTML(M.porId[w.id])}</td><td class="n">${f1(w.aporta / semanas)}<div class="nota">pts/sem</div></td><td class="n">${M.porId[w.id].fila.valor}</td></tr>`).join("")}</tbody></table></div>` : `<div class="vacio">Nadie.</div>`) : `<div class="vacio">Calculando…</div>`}</div>
-        <div class="panel">${titulo("★ Mis seguimientos", "Abre a cualquier jugador y toca ☆ Seguir para tenerlo aquí, con tus notas, en la computadora y en el teléfono.")}
+        <div class="panel">${titulo(ico("menos") + "Candidatos para soltar", "Los jugadores de tu roster que menos puntos le aportan a tu alineación lo que resta de la temporada (casi nunca serían titulares). No incluye a los de tu IR: soltarlos no te abre lugar en el roster.")}
+          ${sinRoster ? necesitaRoster : W ? (W.soltar.length ? `<div class="tabla-scroll"><table class="mini"><thead><tr><th>Jugador</th><th class="n">Aporta</th><th class="n">Valor</th></tr></thead><tbody>${verMas("soltar", W.soltar).map((w) => `<tr class="clic" data-j="${w.id}">
+            <td>${jugHTML(M.porId[w.id])}</td><td class="n">${f1(w.aporta / semanas)}<div class="nota">pts/sem</div></td><td class="n">${M.porId[w.id].fila.valor}</td></tr>`).join("")}</tbody></table></div>${botonMas("soltar", W.soltar.length)}` : `<div class="vacio">Nadie.</div>`) : `<div class="vacio">Calculando…</div>`}</div>
+      </div>`,
+      gemas: () => gemasHTML(),
+      compraventa: () => `<div class="grid2 anchas bloque">
+        <div class="panel">${titulo(ico("sube") + "Comprar barato", "Jugadores cuya proyección para lo que resta es claramente mayor que lo que han hecho. Buen momento para pedirlos en un trade.")}${tablaLista(compra, (x) => filaLista(x, esc(razonesCompra(x).slice(0, 3).join("; ") || "su proyección supera lo que ha hecho")), null, "compra")}</div>
+        <div class="panel">${titulo(ico("baja") + "Vender caro", "Jugadores de tu roster que han rendido más de lo que el modelo espera para lo que resta. Buen momento para ofrecerlos.")}${sinRoster ? necesitaRoster : tablaLista(ventaMia, (x) => filaLista(x, esc(razonesVenta(x).slice(0, 3).join("; ") || "su producción probablemente baje")), "Ninguno de tus jugadores está rindiendo muy por encima de lo esperado.", "venta")}</div>
+        <div class="panel">${titulo(ico("estrella") + "Mis seguimientos", "Abre a cualquier jugador y toca ☆ Seguir para tenerlo aquí, con tus notas, en la computadora y en el teléfono.")}
           ${SY.estado.seguimiento.length ? `<div class="tabla-scroll"><table class="mini"><thead><tr><th>Jugador</th><th class="n">Proy S${SEM}</th><th class="n">Valor</th><th>Nota</th><th></th></tr></thead><tbody>${SY.estado.seguimiento.filter((z) => M.porId[z.id]).map((z) => { const x = M.porId[z.id].fila; return `<tr>
             <td class="clic" data-j="${z.id}">${jugHTML(x.j, duenoDe[z.id] ? esc(duenoDe[z.id].nombre) : enRoster(z.id) ? "tuyo" : "")}</td>
             <td class="n fuerte">${x.sem.bye ? "BYE" : f1(x.sem.pts)}</td><td class="n">${x.valor} ${tendenciaHTML(x)}</td>
@@ -1784,11 +1836,15 @@
             <td><button class="x" data-squitar="${z.id}" title="Dejar de seguir">×</button></td></tr>`; }).join("")}</tbody></table></div>` :
             `<p class="nota">Todavía no sigues a nadie.</p>`}
           <div class="fila" style="margin-top:8px"><input type="text" id="seguirNuevo" list="listaJugadores" placeholder="Seguir a un jugador…" style="flex:1;min-width:180px"><button class="btn" id="btnSeguir">Seguir</button></div></div>
-        <div class="panel">${titulo("🟢 Comprar barato", "Jugadores cuya proyección para lo que resta es claramente mayor que lo que han hecho. Buen momento para pedirlos en un trade.")}${tablaLista(compra, (x) => filaLista(x, esc(razonesCompra(x).slice(0, 3).join("; ") || "su proyección supera lo que ha hecho")))}</div>
-        <div class="panel">${titulo("🔴 Vender caro", "Jugadores de tu roster que han rendido más de lo que el modelo espera para lo que resta. Buen momento para ofrecerlos.")}${sinRoster ? necesitaRoster : tablaLista(ventaMia, (x) => filaLista(x, esc(razonesVenta(x).slice(0, 3).join("; ") || "su producción probablemente baje")), "Ninguno de tus jugadores está rindiendo muy por encima de lo esperado.")}</div>
-        <div class="panel">${titulo("📅 Calendario más fácil lo que resta", "Jugadores con valor de 10 o más cuyos rivales de aquí al final permiten más puntos que el promedio.", `<select id="posCal">${[["OF", "QB/RB/WR/TE"], ["QB", "QB"], ["RB", "RB"], ["WR", "WR"], ["TE", "TE"], ["DST", "D/ST"], ["TODOS", "Todas"]].map(([v, t]) => `<option value="${v}" ${v === posCalendario ? "selected" : ""}>${t}</option>`).join("")}</select>`)}
-          ${tablaLista(calendario, (x) => filaLista(x, `rivales ${Math.round((x.calendario - 1) * 100)}% más fáciles que el promedio`))}</div>
-      </div>`;
+      </div>`,
+      calendario: () => `<div class="panel">${titulo(ico("calendario") + "Calendario más fácil lo que resta", "Jugadores con valor de 10 o más cuyos rivales de aquí al final permiten más puntos que el promedio.", `<select id="posCal">${[["OF", "QB/RB/WR/TE"], ["QB", "QB"], ["RB", "RB"], ["WR", "WR"], ["TE", "TE"], ["DST", "D/ST"], ["TODOS", "Todas"]].map(([v, t]) => `<option value="${v}" ${v === posCalendario ? "selected" : ""}>${t}</option>`).join("")}</select>`)}
+          ${tablaLista(calendario, (x) => filaLista(x, `rivales ${Math.round((x.calendario - 1) * 100)}% más fáciles que el promedio`), null, "cal")}</div>`,
+    };
+    el.innerHTML = `<h2><h2>Mercado ${ayuda("Proy/PJ = puntos por partido que el modelo espera el resto de la temporada. Cuando es mucho mayor que lo que ha hecho (Pts/PJ), es buen momento para pedirlo; cuando es menor, es buen momento para venderlo.")}</h2>
+      <div class="seg">${PEST_M.map(([k, t]) => `<button class="${vistaMercado === k ? "on" : ""}" data-vm="${k}">${t}</button>`).join("")}</div>
+      ${secciones[vistaMercado]()}`;
+    el.querySelectorAll("[data-vm]").forEach((x) => (x.onclick = () => { vistaMercado = x.dataset.vm; guardar("nflf_vm", vistaMercado); render.objetivos(); }));
+    el.querySelectorAll("[data-mas]").forEach((x) => (x.onclick = () => { masMercado[x.dataset.mas] = !masMercado[x.dataset.mas]; render.objetivos(); }));
     el.querySelectorAll("[data-nidea]").forEach((b) => (b.onclick = () => {
       const x = necesidades[+b.dataset.nidea];
       trade.doy = [x.idea.doy]; trade.recibo = [x.idea.recibo]; vistaTrades = "analizar"; abrir("trades");
@@ -1814,8 +1870,8 @@
       const id = desdeEntrada($("#seguirNuevo").value);
       if (id && !seguido(id)) { SY.estado.seguimiento.push({ id, nota: "", fecha: new Date().toISOString().slice(0, 10) }); SY.guardar(); render.objetivos(); }
     };
-    $("#btnSeguir").onclick = seguir;
-    $("#seguirNuevo").onkeydown = (e) => { if (e.key === "Enter") seguir(); };
+    if ($("#btnSeguir")) $("#btnSeguir").onclick = seguir;
+    if ($("#seguirNuevo")) $("#seguirNuevo").onkeydown = (e) => { if (e.key === "Enter") seguir(); };
     if (!sinRoster && (!cache.sugerencias || !cache.waivers)) setTimeout(() => {
       if (!cache.waivers) cache.waivers = calcularWaivers();
       if (!cache.sugerencias) cache.sugerencias = calcularSugerencias();
@@ -1921,7 +1977,7 @@
         <tr><td>Playoffs de fantasy</td><td>semanas ${PLAYOFFS.join(", ")}</td></tr>
       </tbody></table>
       <h3 style="margin-top:12px">Cómo predice</h3>
-      <p class="nota">Cada jugador tiene un promedio por partido de esta temporada (las semanas recientes pesan más) combinado con la temporada pasada. Sus TDs se ajustan hacia lo que sugieren sus yardas y sus jugadas en zona roja, y su volumen sube o baja si está jugando más o menos snaps. Para cada partido se predice el marcador y las yardas de cada equipo con ofensivas y defensas ajustadas por rival, mezclado con la línea de las casas de apuestas, y se ajusta por el clima. Se descuentan lesiones y semanas de descanso, y para la semana actual se mezcla con la proyección de ESPN. El valor de trade es lo que aportará el resto de la temporada por encima de un jugador de waivers. Si un compañero no juega, sus targets y acarreos se reparten entre los demás; si falta el QB titular, el suplente hereda su volumen y sus receptores bajan un poco. Cada día el modelo se compara contra lo que pasó y ajusta sus parámetros (ver Partidos → Qué tan bien predice).</p>
+      <p class="nota">Cada jugador tiene un promedio por partido de esta temporada (las semanas recientes pesan más) combinado con la temporada pasada. Sus TDs se ajustan hacia lo que sugieren sus yardas y sus jugadas en zona roja, y su volumen sube o baja si está jugando más o menos snaps. Para cada partido se predice el marcador y las yardas de cada equipo con ofensivas y defensas ajustadas por rival, mezclado con la línea de las casas de apuestas, y se ajusta por el clima. Se descuentan lesiones y semanas de descanso, y para la semana actual se mezcla con la proyección de ESPN. El valor de trade es lo que aportará el resto de la temporada por encima de un jugador de waivers. Si un compañero no juega, sus targets y acarreos se reparten entre los demás; si falta el QB titular, el suplente hereda su volumen y sus receptores bajan un poco. Cada día el modelo se compara contra lo que pasó y ajusta sus parámetros (ver Partidos → Precisión).</p>
       <h3 style="margin-top:12px">Cuándo se actualiza</h3>
       <p class="nota">Las estadísticas se actualizan solas cada mañana y antes de los partidos del domingo. Lesiones, proyecciones de ESPN, noticias, clima y marcadores se leen al momento cada vez que abres la página.</p>`);
   }
@@ -2223,6 +2279,8 @@
   SY.iniciar();
 
   // Inicio
+  const ICO_TAB = { equipo: "equipo", partidos: "calendario", jugadores: "lista", trades: "trade", objetivos: "mercado", liga: "trofeo" };
+  document.querySelectorAll("#tabs [data-tab] .ico").forEach((x) => { x.innerHTML = ico(ICO_TAB[x.parentNode.dataset.tab]); });
   abrir(actual);
   if (window.Carga) Carga.listo();
   // Lo que se trae de internet empieza ya que la pantalla está pintada
