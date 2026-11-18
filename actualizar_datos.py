@@ -415,20 +415,25 @@ def main():
             equipos = []
             for t in lj["teams"]:
                 nombre = t.get("name") or (t.get("location", "") + " " + t.get("nickname", "")).strip()
-                ids = []
+                ids, ir = [], []
                 for en in (t.get("roster") or {}).get("entries", []):
                     eid = ((en.get("playerPoolEntry") or {}).get("player") or {}).get("id", en.get("playerId"))
+                    gid = None
                     if eid in espn_a_id:
-                        ids.append(espn_a_id[eid])
+                        gid = espn_a_id[eid]
                     elif isinstance(eid, int) and eid < 0:
                         ab = ESPN_TEAMS.get(-eid - 16000)
                         if ab:
-                            ids.append("DST_" + ab)
+                            gid = "DST_" + ab
+                    if gid:
+                        ids.append(gid)
+                        if en.get("lineupSlotId") == 21:  # lista de lesionados (IR)
+                            ir.append(gid)
                 owners = t.get("owners") or []
                 equipos.append({"id": t.get("id"), "nombre": nombre, "abrev": t.get("abbrev", ""),
                                 "dueno": miembros.get(owners[0], "") if owners else "",
                                 "mio": bool(swid) and swid in [str(o).upper() for o in owners],
-                                "jugadores": ids})
+                                "jugadores": ids, "ir": ir})
             liga = {"nombre": (lj.get("settings") or {}).get("name", ""), "equipos": equipos}
             print(f"  liga '{liga['nombre']}': {len(equipos)} equipos")
         else:

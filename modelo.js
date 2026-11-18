@@ -56,6 +56,9 @@
     slots: { QB: 1, RB: 2, WR: 2, TE: 1, K: 1, DST: 1 },
     flexes: [{ nombre: "RB/WR", pos: ["RB", "WR"], n: 1 }],
     banca: 7,
+    ir: 1, // lugares en la lista de lesionados (no cuentan contra el máximo del roster)
+    rosterMax: null, // titulares + banca (sale de la liga; si no, se calcula)
+    limitesPos: {}, // máximo por posición en el roster, p. ej. { QB: 4 }
     playoffs: [15, 16, 17],
     temporadaRegular: 14,
     faab: null,
@@ -74,6 +77,9 @@
     if (c.equipos) cfg.equipos = c.equipos;
     if (c.slots && (c.slots.QB || c.slots.RB)) { cfg.slots = c.slots; cfg.flexes = c.flexes || []; }
     if (c.banca !== undefined) cfg.banca = c.banca;
+    if (c.ir !== undefined) cfg.ir = c.ir;
+    if (c.rosterMax) cfg.rosterMax = c.rosterMax;
+    if (c.limitesPos) cfg.limitesPos = c.limitesPos;
     if (c.playoffs && c.playoffs.length) cfg.playoffs = c.playoffs;
     if (c.temporadaRegular) cfg.temporadaRegular = c.temporadaRegular;
     cfg.faab = c.faab || null;
@@ -81,6 +87,8 @@
     cfg.deLiga = true;
   }
   cfg.flex = Array.from(new Set(cfg.flexes.flatMap((f) => f.pos))); // compatibilidad
+  cfg.titularesN = Object.values(cfg.slots).reduce((a, b) => a + b, 0) + cfg.flexes.reduce((a, f) => a + f.n, 0);
+  if (!cfg.rosterMax) cfg.rosterMax = cfg.titularesN + cfg.banca;
 
   // ---------------- Partidos ----------------
   const partidos = D.partidos.map((g) => ({
@@ -427,6 +435,29 @@
     return { f: 1, nota: "" };
   }
 
+  // ¿Puede ir a la lista de lesionados (IR) de ESPN? ESPN acepta a los que están Fuera (O),
+  // en la lista de lesionados de la NFL (IR/PUP) o suspendidos. Cuestionable o Dudoso no.
+  const IR_OK = { OUT: "Fuera", INJURY_RESERVE: "IR de la NFL", SUSPENSION: "Suspendido", PHYSICALLY_UNABLE_TO_PERFORM: "PUP" };
+  function elegibleIR(j) {
+    if (!j || j.pos === "DST") return null;
+    const ei = j.espn && j.espn.inj;
+    if (ei) return IR_OK[ei] || null;
+    // Sin ESPN: con el estado de la NFL (nflverse)
+    if (j.estado === "RES") return "IR de la NFL";
+    if (j.estado === "PUP") return "PUP";
+    if (j.estado === "SUS") return "Suspendido";
+    if (j.lesion && j.lesion.st === "Out" && j.lesion.w >= semanaProy) return "Fuera";
+    return null;
+  }
+  // Primera semana (desde la actual) en la que se espera que juegue
+  function semanaRegreso(j, hasta) {
+    for (let w = semanaProy; w <= (hasta || SEMANAS); w++) {
+      if (!partidoDe[j.t + "|" + w]) continue; // bye
+      if (disponibilidad(j, w).f >= 0.5) return w;
+    }
+    return null;
+  }
+
   // ---------------- Bajas de compañeros ----------------
   // Si un jugador no va a jugar, sus targets y acarreos se reparten entre sus compañeros según lo que
   // ya reciben (un poco más a los de su misma posición). Si falta el QB titular, el suplente hereda su
@@ -623,12 +654,33 @@
 
   // ---------------- Alineación y trades ----------------
   // fnPts (opcional): otra forma de dar los puntos de cada jugador, p. ej. sus puntos reales
-  function alineacion(ids, w, fnPts) {
-    const ps = ids.filter((id) => porId[id]).map((id) => {
-      if (fnPts) return { id, pos: porId[id].pos, pts: fnPts(id) };
+  // opc (opcional): para la semana en curso, cuando ya empezaron algunos partidos
+  //   opc.enJuego(id) -> null si su partido no ha empezado; si ya empezó, { pts: los que lleva, restante: 0–1 del partido que falta }
+  //   opc.titulares: quiénes están alineados en ESPN. Si su partido ya empezó, los titulares se quedan
+  //   (no se pueden sacar) y los de la banca ya no pueden entrar. Sin titulares, se elige libremente.
+  function alineacion(ids, w, fnPts, opc) {
+    const enJuego = opc && opc.enJuego;
+    const tit = opc && opc.titulares ? new Set(opc.titulares) : null;
+    const fuera = []; // banca con su partido ya empezado: no pueden entrar
+    const ps = [];
+    ids.filter((id) => porId[id]).forEach((id) => {
+      if (fnPts) { ps.push({ id, pos: porId[id].pos, pts: fnPts(id) }); return; }
       const pr = proyectarSemana(porId[id], w);
-      return { id, pos: porId[id].pos, pts: pr.pts, pr };
-    }).sort((a, b) => b.pts - a.pts);
+      const x = { id, pos: porId[id].pos, pts: pr.pts, pr };
+      const e = enJuego ? enJuego(id) : null;
+      if (e) {
+        // Lo que ya hizo más su proyección para lo que falta del partido
+        x.jugado = e; x.real = e.pts; x.restante = e.restante; x.proy = pr.pts;
+        x.pts = e.pts + pr.pts * e.restante;
+        if (tit) {
+          if (tit.has(id)) x.fijo = true;
+          else { x.bloqueado = true; fuera.push(x); return; }
+        }
+      }
+      ps.push(x);
+    });
+    // Los titulares fijos van primero para que ocupen su puesto aunque otro proyecte más
+    ps.sort((a, b) => (b.fijo ? 1 : 0) - (a.fijo ? 1 : 0) || b.pts - a.pts);
     const libres = ps.slice(), titulares = [];
     const tomar = (pred, k, slot) => {
       for (let i = 0; i < k; i++) {
@@ -642,7 +694,9 @@
     cfg.flexes.slice().sort((a, b) => a.pos.length - b.pos.length).forEach((fx) => tomar((x) => fx.pos.includes(x.pos), fx.n, fx.nombre));
     tomar((x) => x.pos === "DST", cfg.slots.DST || 0, "D/ST");
     tomar((x) => x.pos === "K", cfg.slots.K || 0, "K");
-    return { titulares, banca: libres, pts: sum(titulares.map((x) => x.pts)) };
+    const banca = libres.concat(fuera).sort((a, b) => b.pts - a.pts);
+    const yaHechos = sum(titulares.filter((x) => x.jugado).map((x) => x.real));
+    return { titulares, banca, pts: sum(titulares.map((x) => x.pts)), yaHechos, conPartidos: titulares.some((x) => x.jugado && !x.jugado.sinDatos) };
   }
   const ULTIMA_FANTASY = Math.max(...cfg.playoffs);
   function puntosRestoTemporada(ids, hasta) {
@@ -656,7 +710,32 @@
     const f = [1, 0.8, 0.65];
     return sum(v.map((x, i) => x * (f[i] !== undefined ? f[i] : 0.5)));
   }
-  function evaluarTrade(doy, recibo, miRoster, suRoster) {
+  // Si un roster queda con más jugadores activos que el máximo de la liga, hay que soltar a alguien:
+  // se sueltan los que menos le quitan a la alineación lo que resta (nunca a los protegidos).
+  // ir: los que están en la lista de lesionados (no cuentan contra el máximo).
+  function ajustarRoster(ids, opc) {
+    opc = opc || {};
+    const max = opc.max || cfg.rosterMax, ir = new Set(opc.ir || []), prot = new Set(opc.protegidos || []);
+    let r = ids.slice();
+    const soltados = [];
+    let sobran = r.filter((id) => !ir.has(id)).length - max;
+    while (sobran > 0) {
+      const base = puntosRestoTemporada(r);
+      let peor = null;
+      r.filter((id) => !ir.has(id) && !prot.has(id)).forEach((id) => {
+        const pierde = base - puntosRestoTemporada(r.filter((x) => x !== id));
+        if (!peor || pierde < peor.pierde) peor = { id, pierde };
+      });
+      if (!peor) break;
+      r = r.filter((x) => x !== peor.id);
+      soltados.push(peor.id);
+      sobran--;
+    }
+    return { ids: r, soltados };
+  }
+  // opc: { miIR, suIR, miMax, suMax } para respetar el máximo del roster de cada equipo
+  function evaluarTrade(doy, recibo, miRoster, suRoster, opc) {
+    opc = opc || {};
     const vD = valorLado(doy), vR = valorLado(recibo);
     const dif = (vR - vD) / Math.max(1, Math.max(vD, vR));
     let veredicto, clase;
@@ -667,18 +746,18 @@
     else { veredicto = "Injusto: pierdes mucho valor"; clase = "contra"; }
     let impacto = null;
     if (miRoster && miRoster.length) {
-      const despues = miRoster.filter((id) => !doy.includes(id)).concat(recibo);
-      const antes = puntosRestoTemporada(miRoster), luego = puntosRestoTemporada(despues);
+      const aj = ajustarRoster(miRoster.filter((id) => !doy.includes(id)).concat(recibo), { ir: opc.miIR, max: opc.miMax, protegidos: recibo });
+      const antes = puntosRestoTemporada(miRoster), luego = puntosRestoTemporada(aj.ids);
       const semanas = Math.max(1, Math.min(ULTIMA_FANTASY, SEMANAS) - semanaProy + 1);
-      impacto = { antes, luego, dif: luego - antes, porSemana: (luego - antes) / semanas };
+      impacto = { antes, luego, dif: luego - antes, porSemana: (luego - antes) / semanas, soltar: aj.soltados };
     }
     // Lo mismo desde el lado del otro equipo: ¿le conviene a su alineación?
     let impactoOtro = null;
     if (suRoster && suRoster.length) {
-      const despues = suRoster.filter((id) => !recibo.includes(id)).concat(doy);
-      const antes = puntosRestoTemporada(suRoster), luego = puntosRestoTemporada(despues);
+      const aj = ajustarRoster(suRoster.filter((id) => !recibo.includes(id)).concat(doy), { ir: opc.suIR, max: opc.suMax, protegidos: doy });
+      const antes = puntosRestoTemporada(suRoster), luego = puntosRestoTemporada(aj.ids);
       const semanas = Math.max(1, Math.min(ULTIMA_FANTASY, SEMANAS) - semanaProy + 1);
-      impactoOtro = { antes, luego, dif: luego - antes, porSemana: (luego - antes) / semanas };
+      impactoOtro = { antes, luego, dif: luego - antes, porSemana: (luego - antes) / semanas, soltar: aj.soltados };
     }
     // Probabilidad aproximada de que lo acepten: sube si a ellos les conviene en valor y en su alineación
     let acepta = null;
@@ -776,9 +855,10 @@
       let mu = 0, v = 0;
       semanas.forEach((w) => {
         if (w > SEMANAS) return;
-        const al = alineacion(e.jugadores, w);
+        const ej = liga.enJuego && liga.enJuego.w === w ? { enJuego: liga.enJuego.fn, titulares: e.titulares || null } : null;
+        const al = alineacion(e.jugadores, w, null, ej);
         mu += al.pts;
-        v += sum(al.titulares.filter((t) => t.id).map((t) => { const f = porId[t.id].fila; const d = t.pr && t.pr.disp ? t.pr.disp.f : 1; return ((f ? f.sd : 6) * d) ** 2; }));
+        v += sum(al.titulares.filter((t) => t.id).map((t) => { const f = porId[t.id].fila; const d = t.pr && t.pr.disp ? t.pr.disp.f : 1; return ((f ? f.sd : 6) * d) ** 2 * (t.restante !== undefined ? t.restante : 1); }));
       });
       return (proyCache[k] = { mu, sd: Math.sqrt(v + 1) });
     };
@@ -817,7 +897,7 @@
     D, EQUIPOS, MASCOTA, TEAMS, partidos, partidoDe, SEMANAS, semanaProy, byes, cfg, LG, R, base, POS,
     jugadores, porId, puntos, puntosK, puntosDST, filaObj, predecirPartido, proyectarSemana, proyectarPartido,
     puntosReales, recalcular, get tabla() { return tabla; }, get reemplazo() { return reemplazo; },
-    valorLado, alineacion, evaluarTrade, puntosRestoTemporada, disponibilidad, tg, mean, sum, clamp, phi,
+    valorLado, alineacion, evaluarTrade, puntosRestoTemporada, disponibilidad, elegibleIR, semanaRegreso, ajustarRoster, tg, mean, sum, clamp, phi,
     dvp, compararJugadores, simularLiga, efectoClima, ULTIMA_FANTASY, TASA_RZ,
     ponerClima(id, c) { CLIMA[id] = c; },
     PAR, PAR_BASE, RANGO, limpiarCache, bajasEquipo,

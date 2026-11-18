@@ -157,9 +157,12 @@
   const SY = window.Sync;
   // Dirección de esta página para que el botón de ESPN mande la liga directo (no aplica abierta como archivo ni en claude.ai)
   const DESTINO = /^https?:$/.test(location.protocol) && !window.claude ? location.origin + location.pathname : null;
-  let roster = [], origenRoster = "";
+  let roster = [], origenRoster = "", irMio = [];
+  // Quiénes de un equipo de la liga están en su lista de lesionados (IR) de ESPN
+  const irDe = (e) => (e && e.ir ? e.ir.filter((id) => M.porId[id]) : []);
   function cargarRoster() {
     const r = SY.estado.roster;
+    irMio = ligaMia ? irDe(ligaMia) : [];
     // Con la liga de ESPN conectada, el roster siempre es el de ESPN (se pone al día con ⟳ Actualizar)
     if (ligaMia) { roster = ligaMia.jugadores.filter((id) => M.porId[id]); origenRoster = "tu liga de ESPN"; }
     else if (r && r.length) { roster = r.filter((id) => M.porId[id]); origenRoster = "tu lista"; }
@@ -169,6 +172,27 @@
   const guardarRoster = () => { SY.estado.roster = roster.slice(); SY.guardar(); invalidar(); };
   const seguido = (id) => SY.estado.seguimiento.some((x) => x.id === id);
   const enRoster = (id) => roster.includes(id);
+  // ---------------- Límites del roster ----------------
+  // En ESPN: máximo de jugadores = titulares + banca; los de IR no cuentan contra ese máximo,
+  // pero para sacar a alguien de IR necesitas un lugar libre (si no, hay que soltar a alguien).
+  // Si un jugador en IR ya no está lesionado, ESPN no te deja agregar ni cambiar hasta que lo actives.
+  const activos = () => roster.filter((id) => !irMio.includes(id));
+  function plantilla() {
+    const max = M.cfg.rosterMax, n = activos().length;
+    const irSlots = M.cfg.ir || 0;
+    return {
+      sabe: !!ligaMia, // sin liga no sabemos cuántos lugares tienes: se asume que el roster está lleno
+      max, activos: n, libres: ligaMia ? Math.max(0, max - n) : 0, sobran: ligaMia ? Math.max(0, n - max) : 0,
+      banca: M.cfg.banca, irSlots, irUsados: irMio.length, irLibres: Math.max(0, irSlots - irMio.length),
+      irConocido: !!(ligaMia && Array.isArray(ligaMia.ir)),
+      ilegales: irMio.filter((id) => !M.elegibleIR(M.porId[id])),
+    };
+  }
+  // ¿Cabe uno más de su posición? (algunas ligas limitan, p. ej., a 4 QB por roster)
+  const cabePos = (ids, id) => {
+    const p = M.porId[id].pos, lim = (M.cfg.limitesPos || {})[p];
+    return !lim || ids.filter((x) => M.porId[x] && M.porId[x].pos === p).length < lim;
+  };
 
   // Lista para autocompletar
   const etiqueta = (j) => `${j.n} (${nombrePos(j.pos)}, ${j.t})`;
@@ -251,10 +275,51 @@
 
   // ---------------- Cálculos compartidos (se guardan hasta que algo cambie) ----------------
   let cache = {};
-  function invalidar() { cache = {}; }
+  function invalidar() { cache = {}; Object.keys(conStats).forEach((k) => delete conStats[k]); }
   function recalcularTodo() { M.recalcular(); invalidar(); }
   function varianza(al) {
-    return M.sum(al.titulares.filter((t) => t.id).map((t) => { const f = M.porId[t.id].fila; const d = (t.pr && t.pr.disp ? t.pr.disp.f : 1); return (f.sd * d) ** 2; }));
+    return M.sum(al.titulares.filter((t) => t.id).map((t) => { const f = M.porId[t.id].fila; const d = (t.pr && t.pr.disp ? t.pr.disp.f : 1); return (f.sd * d) ** 2 * (t.restante !== undefined ? t.restante : 1); }));
+  }
+  // ---------------- Partidos ya empezados de la semana en curso ----------------
+  // Si el partido de un jugador ya empezó: sus puntos reales (lo que lleva) y qué parte del partido falta.
+  // Viene del marcador en vivo de ESPN; si no está, de las estadísticas de data.js.
+  const conStats = {};
+  function equipoConStats(t, w) {
+    const k = t + "|" + w;
+    if (conStats[k] === undefined) conStats[k] = M.tabla.some((f) => f.j.t === t && f.j.pos !== "DST" && f.reales.some((r) => r.w === w));
+    return conStats[k];
+  }
+  function estadoJugador(j, w) {
+    if (!j || w !== SEM) return null;
+    if (vivo && vivo.semana === w) {
+      const pv = puntosVivo(j);
+      if (pv) return pv.g.estado === "pre" ? null : { pts: pv.pts, restante: pv.restante, g: pv.g, final: pv.g.estado === "post" };
+    }
+    const g = M.partidoDe[j.t + "|" + w];
+    if (!g) return null;
+    const ini = EL ? EL.inicioUTC(g) : null;
+    if (!g.jugado && !(ini && ini.getTime() <= Date.now())) return null;
+    const r = j.fila && j.fila.reales.find((x) => x.w === w);
+    if (r) return { pts: r.pts, restante: 0, g, final: true };
+    // Ya se jugó y su equipo tiene estadísticas, pero él no: no jugó
+    if (g.jugado && (j.pos === "DST" || equipoConStats(j.t, w))) return { pts: 0, restante: 0, g, final: true };
+    // Ya empezó pero todavía no hay datos: se queda bloqueado con su proyección
+    return { pts: 0, restante: 1, g, sinDatos: true };
+  }
+  const enJuego = (id) => estadoJugador(M.porId[id], SEM);
+  // Titulares de ESPN de un equipo de la liga (solo si son de la semana en curso)
+  function titularesDe(e) {
+    if (!e || !D.liga || D.liga.semana !== SEM) return null;
+    if (e.mio) return titularesEspn();
+    return e.titulares ? e.titulares.filter((id) => M.porId[id]) : null;
+  }
+  // Alineación de una semana; en la semana en curso toma en cuenta los partidos que ya empezaron
+  function alin(ids, w, equipo) {
+    // Los que están en IR no se pueden alinear esta semana
+    const ir = irDe(equipo);
+    if (ir.length && w === SEM) ids = ids.filter((id) => !ir.includes(id));
+    if (w !== SEM) return M.alineacion(ids, w);
+    return M.alineacion(ids, w, null, { enJuego, titulares: titularesDe(equipo) });
   }
   function rivalDe(w) {
     if (!D.liga || !ligaMia) return null;
@@ -270,9 +335,9 @@
     return w;
   }
   function enfrentamiento(w, rival) {
-    const mi = M.alineacion(roster, w);
+    const mi = alin(roster, w, ligaMia);
     if (!rival) return { mi, su: null, p: null };
-    const su = M.alineacion(rival.jugadores, w);
+    const su = alin(rival.jugadores, w, rival);
     const p = M.phi((mi.pts - su.pts) / Math.sqrt(varianza(mi) + varianza(su) + 1));
     return { mi, su, p };
   }
@@ -281,7 +346,8 @@
     if (!D.liga || !D.liga.equipos || !(D.liga.calendario || []).length) return (cache.sim = null);
     const cfgL = D.liga.cfg || {};
     const liga = {
-      equipos: D.liga.equipos.map((e) => ({ id: e.id, jugadores: e.mio ? roster : e.jugadores, w: e.w || 0, pf: e.pf || 0 })),
+      equipos: D.liga.equipos.map((e) => ({ id: e.id, jugadores: e.mio ? roster : e.jugadores, titulares: titularesDe(e), w: e.w || 0, pf: e.pf || 0 })),
+      enJuego: { w: SEM, fn: enJuego },
       calendario: D.liga.calendario, periodos: cfgL.periodos || null,
       lugaresPlayoff: cfgL.lugaresPlayoff || 4, periodoActual: D.liga.periodo || 1,
     };
@@ -367,10 +433,19 @@
     if (!EL) return;
     const hoy = new Date().getDay(); // los partidos son jue, dom, lun (y a veces sáb/vie)
     const hayPartidosCerca = M.partidos.some((g) => { if (g.jugado && g.w < SEM - 1) return false; const ini = EL.inicioUTC(g); return ini && Math.abs(ini - Date.now()) < 6 * 3600000; });
-    if (!hayPartidosCerca && ![0, 1, 4].includes(hoy)) return;
+    // También si ya empezó algún partido de esta semana (p. ej. el del jueves visto el sábado)
+    const yaEmpezo = M.partidos.some((g) => { if (g.w !== SEM) return false; const ini = EL.inicioUTC(g); return g.jugado || (ini && ini <= Date.now()); });
+    if (!hayPartidosCerca && !yaEmpezo && ![0, 1, 4].includes(hoy)) return;
     EL.enVivo(D.temporada, null).then((v) => {
+      const firma = (x) => x ? JSON.stringify(x.juegos.map((g) => [g.id, g.estado, g.home.pts, g.away.pts])) + Object.keys(x.porEid).length : "";
+      const cambio = firma(v) !== firma(vivo);
       vivo = v;
-      if (actual === "equipo") pintarVivo();
+      // Los puntos reales cambian la proyección de la semana: se vuelve a calcular
+      if (cambio && v.semana === SEM && v.juegos.some((g) => g.estado !== "pre")) {
+        invalidar();
+        const ocupado = document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
+        if (actual === "equipo" && !ocupado) repintar(); else if (actual === "equipo") pintarVivo();
+      } else if (actual === "equipo") pintarVivo();
       clearTimeout(timerVivo);
       if (v.juegos.some((g) => g.estado === "in")) timerVivo = setTimeout(revisarVivo, 60000);
     }).catch((e) => console.warn("En vivo:", e.message));
@@ -403,14 +478,14 @@
     // Semana de los marcadores
     const w = M.partidos.find((g) => vivo.juegos.some((v) => (v.home.t === g.home && v.away.t === g.away)) && Math.abs(new Date(g.fecha) - new Date(vivo.juegos[0].fecha)) < 6 * 86400000);
     const semana = vivo.semana || (w ? w.w : SEM);
-    const calc = (ids) => {
-      const al = M.alineacion(ids, semana);
+    const calc = (ids, equipo) => {
+      const al = alin(ids, semana, equipo);
       let real = 0, final = 0, varR = 0;
       const filas = al.titulares.map((t) => {
         if (!t.id) return { t, pv: null };
         const j = M.porId[t.id], pv = puntosVivo(j);
         const r = pv ? pv.restante : 1;
-        const proy = t.pts || 0;
+        const proy = t.proy !== undefined ? t.proy : t.pts || 0;
         const fin = (pv ? pv.pts : 0) + proy * r;
         real += pv ? pv.pts : 0; final += fin;
         varR += ((j.fila ? j.fila.sd : 5) ** 2) * r;
@@ -418,9 +493,9 @@
       });
       return { filas, real, final, varR };
     };
-    const yo = calc(roster);
+    const yo = calc(roster, ligaMia);
     const rival = rivalDe(semana);
-    const el2 = rival ? calc(rival.jugadores) : null;
+    const el2 = rival ? calc(rival.jugadores, rival) : null;
     const p = el2 ? M.phi((yo.final - el2.final) / Math.sqrt(yo.varR + el2.varR + 1)) : null;
     const fila = (x) => {
       if (!x.j) return `<tr><td><b>${x.t.slot}</b></td><td class="malo" colspan="3">vacío</td></tr>`;
@@ -429,7 +504,7 @@
       return `<tr class="clic" data-j="${x.j.id}"><td><b>${x.t.slot}</b></td><td>${esc(x.j.n)} <span class="nota">${esc(x.j.t)}</span><div class="nota">${est}</div></td>
         <td class="n grande">${f1(x.pv ? x.pv.pts : 0)}</td><td class="n nota">${f1(x.fin)}</td></tr>`;
     };
-    el.innerHTML = `<div class="panel bloque vivo">${titulo(`<span class="punto-vivo"></span> En vivo · semana ${semana}`, "Puntos reales de tu alineación recomendada mientras se juegan los partidos (ESPN), con el puntaje de tu liga. 'Final' estima cómo terminará cada uno: lo que lleva más su proyección para el tiempo que falta. Se actualiza cada minuto.", `<span class="nota">actualizado ${new Date(vivo.hora).toLocaleTimeString("es-MX", { hour: "numeric", minute: "2-digit" })}</span>`)}
+    el.innerHTML = `<div class="panel bloque vivo">${titulo(`<span class="punto-vivo"></span> En vivo · semana ${semana}`, "Puntos reales de tu alineación mientras se juegan los partidos (ESPN), con el puntaje de tu liga. Los que ya jugaron se quedan donde los tenías en ESPN. 'Final' estima cómo terminará cada uno: lo que lleva más su proyección para el tiempo que falta. Se actualiza cada minuto.", `<span class="nota">actualizado ${new Date(vivo.hora).toLocaleTimeString("es-MX", { hour: "numeric", minute: "2-digit" })}</span>`)}
       <div class="marcador grande-m">
         <div class="eq">${esc(ligaMia ? ligaMia.nombre : "Tu alineación")}</div><div class="pt">${f1(yo.real)} <span class="nota">→ ${f0(yo.final)}</span></div>
         ${el2 ? `<div class="eq">${esc(rival.nombre)}</div><div class="pt">${f1(el2.real)} <span class="nota">→ ${f0(el2.final)}</span></div>` : ""}
@@ -437,7 +512,7 @@
       ${p !== null ? `<div class="prob"><i class="h" style="width:${p * 100}%"></i><i class="a" style="width:${(1 - p) * 100}%"></i></div><div class="fila entre mini"><span>Tú ${pct(p)}</span><span>${esc(rival.abrev || rival.nombre)} ${pct(1 - p)}</span></div>` : ""}
       <details class="detalles" open><summary>Tus jugadores</summary><table class="mini"><thead><tr><th>Puesto</th><th>Jugador</th><th class="n">Lleva</th><th class="n">Final</th></tr></thead><tbody>${yo.filas.map(fila).join("")}</tbody></table></details>
       ${el2 ? `<details class="detalles"><summary>Jugadores de ${esc(rival.nombre)}</summary><table class="mini"><tbody>${el2.filas.map(fila).join("")}</tbody></table></details>` : ""}
-      <p class="nota">Usa tu alineación recomendada; si alineaste distinto en ESPN, tus puntos reales pueden variar.</p></div>`;
+      <p class="nota">${titularesDe(ligaMia) ? "Los que ya jugaron cuentan como los alineaste en ESPN; los que faltan, con la alineación recomendada." : "Usa tu alineación recomendada; si alineaste distinto en ESPN, tus puntos reales pueden variar."}</p></div>`;
     conectarClics(el);
   }
 
@@ -456,7 +531,7 @@
     // Proyección por semana con rango
     const resto = []; let totalResto = 0;
     for (let w = SEM; w <= ULTIMA; w++) {
-      const a = M.alineacion(roster, w), sd = Math.sqrt(varianza(a));
+      const a = w === semEquipo ? al : alin(roster, w, ligaMia), sd = Math.sqrt(varianza(a));
       totalResto += a.pts;
       const byes = roster.filter((id) => M.byes[M.porId[id].t] === w && M.porId[id].pos !== "DST").length;
       resto.push({ x: "S" + w, y: a.pts, lo: Math.max(0, a.pts - M.RANGO * sd), hi: a.pts + M.RANGO * sd, tipo: "proy", playoff: PLAYOFFS.includes(w),
@@ -465,13 +540,15 @@
     // Alertas
     const alertas = [];
     const alerta = (tipo, ico, html, id) => `<li class="al-${tipo} ${id ? "clic" : ""}" ${id ? `data-j="${id}"` : ""}><span class="al-ico" aria-hidden="true">${ico}</span><span>${html}</span></li>`;
+    if (roster.length && semEquipo === SEM) alertasRoster().forEach(([tipo, ico, html, id]) => alertas.push(alerta(tipo, ico, html, id)));
     if (roster.length) al.titulares.forEach((t) => {
       if (!t.id) { alertas.push(alerta("rojo", "➕", `<b>${t.slot}</b>: no tienes a nadie para este puesto. Busca en <a href="#" data-ir="objetivos">Mercado</a>.`)); return; }
+      if (t.jugado) return; // ya jugó o está jugando: no hay nada que hacer
       const d = t.pr.disp, n = esc(M.porId[t.id].n);
       if (t.pr.bye) alertas.push(alerta("amar", "💤", `<b>${n}</b> descansa (bye) esta semana.`, t.id));
       else if (d && d.f < 1 && d.nota) alertas.push(alerta(d.f < 0.5 ? "rojo" : "amar", "🚑", `<b>${n}</b>: ${esc(d.nota)}.${d.f < 0.5 ? " Ten listo a un suplente." : ""}`, t.id));
     });
-    al.banca.forEach((b) => { const d = b.pr.disp; if (d && d.f === 0 && d.nota && !b.pr.bye && /Fuera|IR|lesionados/.test(d.nota)) alertas.push(alerta("gris", "🩹", `${esc(M.porId[b.id].n)} (banca): ${esc(d.nota)}.`, b.id)); });
+    al.banca.forEach((b) => { if (b.jugado) return; const d = b.pr.disp; if (d && d.f === 0 && d.nota && !b.pr.bye && /Fuera|IR|lesionados/.test(d.nota)) alertas.push(alerta("gris", "🩹", `${esc(M.porId[b.id].n)} (banca): ${esc(d.nota)}.`, b.id)); });
     const sim = simulacion();
     const rank = rankingRosters();
     const miRank = rank && ligaMia ? rank.find((f) => f.e.mio) : null;
@@ -487,6 +564,7 @@
       if (!x.id) return `<tr><td><span class="slot">${x.slot}</span></td><td colspan="6" class="malo">Sin jugador para este puesto</td></tr>`;
       const j = M.porId[x.id], pr = x.pr;
       const g = pr.g;
+      if (x.jugado) return filaJugado(x, j, banca);
       return `<tr class="clic" data-j="${j.id}">
         <td><span class="slot ${banca ? "bn" : ""}">${banca ? "BN" : x.slot}</span></td>
         <td>${jugHTML(j)}<div class="solo-movil mt-al">${rivalHTML(j, pr)} ${pr.bye ? "" : estadoTag(pr)}</div></td>
@@ -495,6 +573,33 @@
         <td class="n ocultar-movil">${pr.espn !== null && pr.espn !== undefined ? f1(pr.espn) : "–"}</td>
         <td class="n ocultar-movil">${pr.bye || !pr.pts ? "–" : f0(piso(x)) + "–" + f0(techo(x))}</td>
         <td class="ocultar-movil">${estadoTag(pr)}</td>
+        <td>${ligaMia ? "" : `<button class="x" data-quitar="${j.id}" title="Quitar de mi equipo">×</button>`}</td></tr>`;
+    };
+    // Jugadores en la lista de lesionados (IR) de ESPN: no se pueden alinear
+    const filaIR = (id) => {
+      const j = M.porId[id], ok = M.elegibleIR(j), w = M.semanaRegreso(j, ULTIMA);
+      const tag = ok ? `<span class="tag gris">${esc(ok)}</span>` : `<span class="tag rojo" title="ESPN no te deja hacer movimientos hasta que lo actives">Ya no está lesionado: actívalo</span>`;
+      return `<tr class="clic" data-j="${id}"><td><span class="slot bn">IR</span></td>
+        <td>${jugHTML(j)}<div class="solo-movil mt-al">${tag}</div></td>
+        <td class="ocultar-movil">${w ? `Regreso estimado: semana ${w}` : "Sin regreso esperado"}</td>
+        <td class="n grande">–</td><td class="n ocultar-movil">–</td><td class="n ocultar-movil">–</td>
+        <td class="ocultar-movil">${tag}</td><td></td></tr>`;
+    };
+    // Jugadores cuyo partido ya empezó: se muestran sus puntos reales y quedan bloqueados
+    const filaJugado = (x, j, banca) => {
+      const e = x.jugado, pr = x.pr;
+      const est = e.final ? "Final" : e.sinDatos ? "Ya empezó" : esc((e.g && e.g.detalle) || "En juego");
+      const candado = x.fijo ? "Titular en ESPN: ya no se puede sacar" : x.bloqueado ? "En la banca: su partido ya empezó, ya no puede entrar" : "Su partido ya empezó";
+      const tag = `<span class="tag ${e.final ? "gris" : "verde"}" title="${candado}">🔒 ${est}</span>`;
+      const valor = e.sinDatos ? `${f1(x.pts)}<div class="nota">proy</div>` : e.final ? `${f1(x.real)}<div class="nota">reales</div>` : `${f1(x.real)}<div class="nota">→ ${f1(x.pts)}</div>`;
+      return `<tr class="clic jugado" data-j="${j.id}">
+        <td><span class="slot ${banca ? "bn" : ""}">${banca ? "BN" : x.slot}</span></td>
+        <td>${jugHTML(j)}<div class="solo-movil mt-al">${rivalHTML(j, pr)} ${tag}</div></td>
+        <td class="ocultar-movil">${rivalHTML(j, pr)}</td>
+        <td class="n grande">${valor}</td>
+        <td class="n ocultar-movil">${pr.espn !== null && pr.espn !== undefined ? f1(pr.espn) : "–"}</td>
+        <td class="n ocultar-movil">${e.final ? "–" : "proy " + f1(x.proy)}</td>
+        <td class="ocultar-movil">${tag}</td>
         <td>${ligaMia ? "" : `<button class="x" data-quitar="${j.id}" title="Quitar de mi equipo">×</button>`}</td></tr>`;
     };
     // Fuerza por posición: tu titular vs. el titular promedio de la liga
@@ -522,9 +627,9 @@
     let hero;
     if (rival && enf.su) {
       const p = enf.p;
-      const filaR = (t) => t.id ? `<tr class="clic" data-j="${t.id}"><td><b>${t.slot}</b></td><td>${esc(M.porId[t.id].n)} <span class="nota">${esc(M.porId[t.id].t)}</span></td><td class="n">${f1(t.pts)}</td></tr>` : `<tr><td><b>${t.slot}</b></td><td class="malo">vacío</td><td class="n">0</td></tr>`;
+      const filaR = (t) => t.id ? `<tr class="clic" data-j="${t.id}"><td><b>${t.slot}</b></td><td>${esc(M.porId[t.id].n)} <span class="nota">${esc(M.porId[t.id].t)}</span>${t.jugado ? ` <span class="nota" title="Su partido ya empezó">🔒 ${t.jugado.final ? "final" : "lleva " + f1(t.real)}</span>` : ""}</td><td class="n">${f1(t.pts)}</td></tr>` : `<tr><td><b>${t.slot}</b></td><td class="malo">vacío</td><td class="n">0</td></tr>`;
       hero = `<div class="hero">
-        <div class="fila entre"><div class="hero-t">Semana ${semEquipo}${PLAYOFFS.includes(semEquipo) ? " · playoffs" : ""} ${ayuda("Probabilidad de ganar con tu alineación recomendada contra la alineación proyectada de tu rival, tomando en cuenta qué tanto suele variar cada jugador.")}</div>${selRival}</div>
+        <div class="fila entre"><div class="hero-t">Semana ${semEquipo}${PLAYOFFS.includes(semEquipo) ? " · playoffs" : ""} ${ayuda("Probabilidad de ganar con tu alineación recomendada contra la alineación proyectada de tu rival, tomando en cuenta qué tanto suele variar cada jugador. Los jugadores que ya jugaron cuentan con sus puntos reales, y se quedan donde estaban en ESPN: los titulares no se pueden sacar y los de la banca ya no pueden entrar.")}</div>${selRival}</div>
         <div class="vs">
           <div class="lado ${p >= 0.5 ? "gana" : ""}">${escudo(ligaMia)}<div class="nom">${esc(ligaMia.nombre)}</div><div class="pts">${f1(al.pts)}</div></div>
           <div class="contra-t">${medidor(p, "de ganar")}</div>
@@ -532,6 +637,7 @@
         </div>
         <div class="prob grande-p"><i class="h" style="width:${p * 100}%"></i><i class="a" style="width:${(1 - p) * 100}%"></i></div>
         <div class="hero-n">${p >= 0.65 ? "Vas como favorito claro" : p >= 0.5 ? "Vas ligeramente arriba" : p >= 0.35 ? "Vas ligeramente abajo: revisa el comparador y los waivers" : "Vas abajo: busca puntos en waivers o un cambio de alineación"}${sim && sim[ligaMia.id] ? ` · Playoffs: <b>${pct(sim[ligaMia.id].playoffs)}</b>` : ""}${miRank ? ` · Tu roster: <b>${miRank.lugar}º de ${rank.length}</b>` : ""}</div>
+        ${al.conPartidos || enf.su.conPartidos ? `<div class="hero-n nota">🔒 Ya llevan: tú <b>${f1(al.yaHechos)}</b> pts · ${esc(rival.nombre)} <b>${f1(enf.su.yaHechos)}</b> pts. El resto es proyección.</div>` : ""}
         <details class="detalles"><summary>Alineación proyectada de ${esc(rival.nombre)}</summary><table class="mini"><tbody>${enf.su.titulares.map(filaR).join("")}</tbody></table></details>
       </div>`;
     } else {
@@ -551,12 +657,13 @@
         <div class="fila bv-btns"><a class="btn" href="#" data-ir="liga">🔗 Conectar mi liga de ESPN</a><a class="btn sec-b" href="#sec-alin" id="irAgregar">➕ Agregar jugadores a mano</a></div></div>`}
       <div id="envivo"></div>
       <div class="grid2 bloque">
-        <div class="panel" id="sec-alin">${titulo(`Alineación recomendada · semana ${semEquipo}`, "Los titulares que más puntos proyectan esta semana. Proy = proyección del modelo (mezclada con la de ESPN cuando existe). Rango = de una semana mala a una buena (8 de cada 10 semanas caen ahí).")}
+        <div class="panel" id="sec-alin">${titulo(`Alineación recomendada · semana ${semEquipo}`, "Los titulares que más puntos proyectan esta semana. Proy = proyección del modelo (mezclada con la de ESPN cuando existe). Rango = de una semana mala a una buena (8 de cada 10 semanas caen ahí). 🔒 = su partido ya empezó: se muestran sus puntos reales, y si está de titular en ESPN ya no se puede sacar (o si está en la banca, ya no puede entrar).")}
           <div class="tabla-scroll"><table class="alin">
             <thead><tr><th>Puesto</th><th>Jugador</th><th class="ocultar-movil">Rival</th><th class="n">Proy</th><th class="n ocultar-movil">ESPN</th><th class="n ocultar-movil">Rango</th><th class="ocultar-movil">Estado</th><th></th></tr></thead>
             <tbody>${al.titulares.map((x) => filaAl(x)).join("")}
             <tr><td colspan="8" class="sep">Banca</td></tr>
-            ${al.banca.map((x) => filaAl(x, true)).join("")}</tbody></table></div>
+            ${al.banca.filter((x) => !irMio.includes(x.id)).map((x) => filaAl(x, true)).join("")}
+            ${irMio.length ? `<tr><td colspan="8" class="sep">Lista de lesionados (IR)</td></tr>${irMio.map(filaIR).join("")}` : ""}</tbody></table></div>
           ${ligaMia ? `<p class="nota" style="margin-top:8px">Tu roster viene de ESPN. Si hiciste un cambio allá, da clic en <b>⟳ Actualizar</b>.</p>` : `<div class="fila" style="margin-top:10px"><input type="text" id="agregar" list="listaJugadores" placeholder="Agregar jugador a mi equipo…" style="flex:1;min-width:200px">
             <button class="btn" id="btnAgregar">Agregar</button></div>`}
         </div>
@@ -565,6 +672,7 @@
           <div class="panel" id="noticiasRoster">${titulo("📰 Noticias de tu roster", "Las notas más recientes de Rotowire (vía ESPN) sobre tus jugadores. Vienen en inglés; toca Traducir para verlas en español.")}<div class="vacio">${roster.length ? "Cargando noticias…" : "Agrega jugadores para ver sus noticias."}</div></div>
         </div>
       </div>
+      ${roster.length ? `<div class="panel bloque" id="sec-ir">${titulo("🏥 Roster e IR", "Tu liga tiene un máximo de jugadores (titulares + banca) y lugares aparte para la lista de lesionados (IR). Los de IR no cuentan contra el máximo, pero para sacar a alguien de IR necesitas un lugar libre, así que muchas veces hay que soltar a alguien. ESPN deja poner en IR a quien está Fuera (O), en la lista de lesionados de la NFL o suspendido. Si alguien en tu IR ya está sano, ESPN no te deja hacer movimientos hasta que lo actives.")}<div class="ir-cuerpo"><div class="vacio">Revisando tu roster…</div></div></div>` : ""}
       <div class="grid2 bloque">
         <div class="panel" id="sec-graf">${titulo("Proyección de tu alineación por semana", "Barra = puntos proyectados de tu mejor alineación cada semana. La línea muestra el rango de semana mala a buena. Las semanas sombreadas son los playoffs de fantasy. Abajo se marca cuántos de tus jugadores descansan (bye).")}${graficaSVG(resto)}</div>
         <div class="panel" id="sec-fuerza">${titulo("💪 Fuerza por posición (resto de temporada)", `Tus titulares contra el titular promedio de una liga de ${M.cfg.equipos} equipos. Las posiciones débiles son las que conviene reforzar con un trade o waivers.`)}
@@ -582,7 +690,7 @@
     pintarNoticiasRoster();
     pintarVivo();
     conectarClics(el);
-    if (roster.length) { guardarFotoSemana(); llenarEstaSemana(); }
+    if (roster.length) { guardarFotoSemana(); llenarEstaSemana(); setTimeout(pintarIR, 40); }
   };
 
   // ================= ESTA SEMANA =================
@@ -595,7 +703,16 @@
     const pts = (id) => M.proyectarSemana(M.porId[id], SEM).pts;
     const entran = rec.filter((id) => !tit.includes(id)).sort((a, b) => pts(b) - pts(a));
     const salen = tit.filter((id) => !rec.includes(id)).sort((a, b) => pts(a) - pts(b));
-    return entran.map((id, i) => ({ entra: id, sale: salen[i] || null, gana: pts(id) - (salen[i] ? pts(salen[i]) : 0) }));
+    // Se empareja primero con alguien de su misma posición (QB por QB, etc.)
+    const pos = (id) => M.porId[id].pos;
+    const quedan = salen.slice();
+    const pares = entran.map((id) => {
+      let k = quedan.findIndex((x) => pos(x) === pos(id));
+      if (k < 0) k = 0;
+      const sale = quedan.length ? quedan.splice(k, 1)[0] : null;
+      return { entra: id, sale, gana: pts(id) - (sale ? pts(sale) : 0) };
+    });
+    return pares;
   }
   function estaSemanaHTML(al, alertas) {
     if (semEquipo !== SEM) return "";
@@ -603,7 +720,7 @@
     const nom = (id) => esc(M.porId[id].n);
     let alin;
     if (cambios && cambios.length) alin = `<b>Cambia ${cambios.length === 1 ? "a 1 titular" : `a ${cambios.length} titulares`} en ESPN</b> (+${f1(M.sum(cambios.map((c) => c.gana)))} pts):
-      <ul class="lista-cambios">${cambios.map((c) => `<li><span class="bueno">▲ ${nom(c.entra)}</span>${c.sale ? ` en lugar de <span class="malo">${nom(c.sale)}</span>` : ""} <span class="nota">+${f1(c.gana)}</span></li>`).join("")}</ul>`;
+      <ul class="lista-cambios">${cambios.map((c) => `<li><span class="bueno">▲ ${nom(c.entra)}</span>${c.sale ? ` en lugar de <span class="malo">${nom(c.sale)}</span>` : ""} <span class="nota">${c.gana >= 0 ? "+" : ""}${f1(c.gana)}</span></li>`).join("")}</ul>`;
     else if (cambios) alin = `<b>Tu alineación en ESPN ya es la mejor.</b> Proyecta ${f1(al.pts)} pts.`;
     else alin = `<b>Alinea a tus ${al.titulares.filter((x) => x.id).length} titulares recomendados</b> (${f1(al.pts)} pts). <a href="#sec-alin">Ver alineación</a>`;
     return `<div class="panel esta-semana">${titulo(`📌 Esta semana (${SEM})`, "Lo que conviene hacer antes de los partidos. Se calcula con tu roster de ESPN y las proyecciones de la semana.")}
@@ -623,7 +740,8 @@
       const sem = Math.max(1, ULTIMA - SEM + 1);
       const w = cache.waivers.agregar[0];
       ew.classList.remove("nota");
-      ew.innerHTML = w ? `<b>Agrega a <a href="#" data-j="${w.add}">${esc(M.porId[w.add].n)}</a></b> y suelta a ${esc(M.porId[w.drop].n)}: +${f1(w.gana / sem)} pts por semana.
+      const bloqueo = cache.waivers.pl.ilegales.length ? ` <span class="malo">Antes activa a ${cache.waivers.pl.ilegales.map((id) => esc(M.porId[id].n)).join(" y ")} de tu IR: ESPN no te deja agregar hasta entonces.</span>` : "";
+      ew.innerHTML = w ? `<b>Agrega a <a href="#" data-j="${w.add}">${esc(M.porId[w.add].n)}</a></b> ${quienSale(w)}: +${f1(w.gana / sem)} pts por semana.${bloqueo}
         ${M.cfg.faab ? `<span class="nota">Oferta sugerida: $${ofertaFaab(w.gana / sem)}.</span>` : ""} <a href="#" data-ir="objetivos">Más opciones</a>`
         : `<span class="nota">Nadie libre mejora tu equipo ahora mismo.</span>`;
       const s = cache.sugerencias[0];
@@ -1113,7 +1231,13 @@
   $("#modal").onclick = (e) => { if (e.target.id === "modal") $("#modal").hidden = true; };
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#modal").hidden = true; });
   function conectarClics(el) {
-    el.querySelectorAll("[data-j]").forEach((tr) => (tr.onclick = (e) => { if (e.target.closest("button, a, input, select")) return; detalle(tr.dataset.j); }));
+    el.querySelectorAll("[data-j]").forEach((tr) => (tr.onclick = (e) => {
+      // Un botón o enlace dentro de la fila hace lo suyo; un enlace que es el jugador mismo abre su ficha
+      const c = e.target.closest("button, a, input, select");
+      if (c && c !== tr) return;
+      if (c) e.preventDefault();
+      detalle(tr.dataset.j);
+    }));
   }
 
   // ================= TRADES =================
@@ -1162,7 +1286,12 @@
       // ¿De qué equipo son los que recibo? Si todos son del mismo, se calcula su lado también
       const duenos = Array.from(new Set(trade.recibo.map((id) => duenoDe[id] && !duenoDe[id].mio ? duenoDe[id].id : null)));
       const otro = duenos.length === 1 && duenos[0] !== null ? D.liga.equipos.find((e) => e.id === duenos[0]) : null;
-      const r = M.evaluarTrade(trade.doy, trade.recibo, roster.some((id) => trade.doy.includes(id)) ? roster : null, otro ? otro.jugadores : null);
+      const r = M.evaluarTrade(trade.doy, trade.recibo, roster.some((id) => trade.doy.includes(id)) ? roster : null, otro ? otro.jugadores : null,
+        { miIR: irMio, miMax: ligaMia ? M.cfg.rosterMax : Infinity, suIR: irDe(otro), suMax: M.cfg.rosterMax });
+      const nombres = (ids) => ids.map((id) => `<b>${esc(M.porId[id].n)}</b>`).join(" y ");
+      const lugar = (r.impacto && r.impacto.soltar.length ? `<li>✂️ Recibes más jugadores de los que das y tu roster quedaría pasado del máximo (${M.cfg.rosterMax}): tendrías que soltar a ${nombres(r.impacto.soltar)}. Ya está contado en el veredicto.</li>` : "")
+        + (r.impactoOtro && r.impactoOtro.soltar.length ? `<li>✂️ ${esc(otro.nombre)} tendría que soltar a ${nombres(r.impactoOtro.soltar)} para hacer lugar.</li>` : "")
+        + trade.recibo.filter((id) => otro && irDe(otro).includes(id)).map((id) => `<li>🏥 <b>${esc(M.porId[id].n)}</b> está en el IR de ${esc(otro.nombre)}: al recibirlo ${plantilla().irLibres && M.elegibleIR(M.porId[id]) ? "puedes ponerlo en tu IR" : "ocupa un lugar en tu banca"}.</li>`).join("");
       const max = Math.max(r.vD, r.vR, 1);
       const imp = r.impacto ? `<p style="margin-top:10px"><b>Tu alineación:</b> ${r.impacto.dif >= 0 ? `<span class="bueno fuerte">+${f1(r.impacto.porSemana)} pts por semana</span>` : `<span class="malo fuerte">${f1(r.impacto.porSemana)} pts por semana</span>`}
         (${f0(r.impacto.antes)} → ${f0(r.impacto.luego)} pts de aquí al final). Considera a quién pondrías de titular cada semana, descansos y lesiones.</p>` : "";
@@ -1186,7 +1315,7 @@
           <div><div class="nota">Valor que recibes</div><div class="fila"><div class="barra" style="flex:1"><i style="width:${(r.vR / max) * 100}%"></i></div><b>${f0(r.vR)}</b></div></div>
         </div><p class="nota">El valor mide lo que aporta cada jugador por encima de uno de waivers, sin importar tu roster. Sirve para saber si el otro equipo lo vería justo.</p></details>
         ${r.porPuntos ? "" : imp}
-        ${avisos ? `<ul class="avisos">${avisos}</ul>` : ""}
+        ${avisos || lugar ? `<ul class="avisos">${lugar}${avisos}</ul>` : ""}
         <p class="nota" style="margin-top:8px">${recibeMejor ? "Recibes al mejor jugador del trade; eso suele valer más que varias piezas medianas. " : "Das al mejor jugador del trade; asegúrate de que lo que recibes llene una necesidad real. "}
         Playoffs de fantasy (semanas ${PLAYOFFS.join(", ")}): das ${f0(playD)} pts proyectados y recibes ${f0(playR)}.</p></div>`;
     }
@@ -1265,23 +1394,135 @@
   }
 
   // ================= MOVIMIENTOS =================
+  // Avisos del roster para "Esta semana": IR mal usado, lugares de IR sin usar, roster pasado del máximo
+  function alertasRoster() {
+    const pl = plantilla(), out = [];
+    if (!pl.sabe) return out;
+    const nom = (id) => esc(M.porId[id].n);
+    pl.ilegales.forEach((id) => out.push(["rojo", "🚨", `<b>${nom(id)}</b> ya no está lesionado y sigue en tu IR: ESPN no te deja agregar ni hacer cambios hasta que lo actives${pl.libres ? "" : " (y para eso tienes que soltar a alguien)"}. <a href="#sec-ir">Ver qué hacer</a>`, id]));
+    if (pl.sobran) out.push(["rojo", "⚠️", `Tienes <b>${pl.sobran} ${pl.sobran === 1 ? "jugador" : "jugadores"} de más</b> (${pl.activos} de ${pl.max}). <a href="#sec-ir">Ver a quién soltar</a>`]);
+    const mover = activos().filter((id) => M.elegibleIR(M.porId[id])).sort((a, b) => M.porId[b].fila.ros - M.porId[a].fila.ros).slice(0, pl.irLibres);
+    mover.forEach((id) => out.push(["amar", "🏥", `Mueve a <b>${nom(id)}</b> (${esc(M.elegibleIR(M.porId[id]))}) a tu IR: te libera un lugar en la banca sin soltar a nadie.`, id]));
+    return out;
+  }
   function calcularWaivers() {
     const base = M.puntosRestoTemporada(roster);
+    const pl = plantilla(), act = activos();
     const candidatos = M.tabla.filter((x) => esLibre(x.j.id) && x.ros > 0).sort((a, b) => b.rosPG - a.rosPG).slice(0, 70);
     const agregar = [];
     const minimo = Math.max(3, 0.5 * Math.max(1, ULTIMA - SEM + 1)); // al menos medio punto por semana
+    // Lugar para agregar sin soltar: un lugar libre, o mover a IR a alguien que ya puede ir
+    const aIR = !pl.libres && pl.irLibres ? act.filter((id) => M.elegibleIR(M.porId[id])).sort((a, b) => M.porId[b].fila.ros - M.porId[a].fila.ros)[0] || null : null;
+    const sinSoltar = pl.libres > 0 || !!aIR;
     candidatos.forEach((x) => {
       let mejor = null;
-      roster.forEach((d) => {
-        const gana = M.puntosRestoTemporada(roster.filter((r) => r !== d).concat([x.j.id])) - base;
+      if (sinSoltar) {
+        if (cabePos(roster, x.j.id)) {
+          const gana = M.puntosRestoTemporada(roster.concat([x.j.id])) - base;
+          if (gana > minimo) mejor = { add: x.j.id, drop: null, ir: pl.libres ? null : aIR, gana };
+        }
+      } else act.forEach((d) => {
+        // Solo se suelta a alguien activo: soltar a uno de IR no abre lugar en el roster
+        const r = roster.filter((y) => y !== d);
+        if (!cabePos(r, x.j.id)) return;
+        const gana = M.puntosRestoTemporada(r.concat([x.j.id])) - base;
         if (gana > minimo && (!mejor || gana > mejor.gana)) mejor = { add: x.j.id, drop: d, gana };
       });
       if (mejor) agregar.push(mejor);
     });
     agregar.sort((a, b) => b.gana - a.gana);
-    const soltar = roster.map((id) => ({ id, aporta: base - M.puntosRestoTemporada(roster.filter((r) => r !== id)) }))
-      .sort((a, b) => a.aporta - b.aporta).slice(0, 5);
-    return { agregar: agregar.slice(0, 10), soltar };
+    const soltar = act.map((id) => ({ id, aporta: base - M.puntosRestoTemporada(roster.filter((r) => r !== id)) }))
+      .sort((a, b) => a.aporta - b.aporta);
+    return { agregar: agregar.slice(0, 10), soltar: soltar.slice(0, 5), soltarTodos: soltar, pl };
+  }
+  // Cómo se hace lugar para un jugador de waivers (texto)
+  const quienSale = (w) => w.drop ? `y suelta a ${esc(M.porId[w.drop].n)}` : w.ir ? `y mueve a ${esc(M.porId[w.ir].n)} a IR (no sueltas a nadie)` : "(tienes un lugar libre: no sueltas a nadie)";
+  // Qué hacer con la lista de lesionados (IR) y los lugares del roster
+  function analisisIR() {
+    const pl = plantilla();
+    if (!pl.sabe) return null;
+    const W = cache.waivers || (cache.waivers = calcularWaivers());
+    const act = activos();
+    const sem = Math.max(1, ULTIMA - SEM + 1);
+    // El que menos le aporta a tu alineación (sin contar a los que se excluyen)
+    const soltable = (excl) => W.soltarTodos.find((x) => !excl.includes(x.id)) || null;
+    const items = [];
+    let libres = pl.libres;
+    const sueltos = [], aIR = []; // a quiénes ya se sugirió soltar o mover a IR
+    const fuera = () => sueltos.concat(aIR);
+    // Activar a los que ya están sanos libera su lugar de IR
+    let irLibres = pl.irLibres + pl.ilegales.length;
+    const enIRok = irMio.filter((id) => M.elegibleIR(M.porId[id]));
+    // 1) Activos que pueden ir a IR: los de más valor primero (a los de poco valor conviene soltarlos).
+    //    Cada uno que entra a IR abre un lugar en el roster.
+    const eleg = act.filter((id) => M.elegibleIR(M.porId[id])).sort((a, b) => M.porId[b].fila.ros - M.porId[a].fila.ros);
+    eleg.forEach((id) => {
+      const x = M.porId[id].fila, aporta = W.soltarTodos.find((y) => y.id === id);
+      const ap = aporta ? aporta.aporta / sem : 0;
+      if (irLibres > 0) { irLibres--; libres++; aIR.push(id); items.push({ tipo: "mover", id, ap }); return; }
+      // IR lleno: ¿hay alguien en IR que valga bastante menos? Se suelta a ese y este entra a IR
+      const peorIR = enIRok.filter((y) => !sueltos.includes(y)).sort((a, b) => M.porId[a].fila.ros - M.porId[b].fila.ros)[0];
+      if (peorIR && M.porId[peorIR].fila.ros + 5 < x.ros) {
+        sueltos.push(peorIR); aIR.push(id); libres++;
+        items.push({ tipo: "cambiarIR", id, sale: peorIR, ap });
+      } else if (ap < 0.3) items.push({ tipo: "soltarLesionado", id, ap });
+      else items.push({ tipo: "banca", id, ap });
+    });
+    // 2) En IR pero ya sano: hay que activarlo (ESPN bloquea movimientos). Va hasta arriba.
+    //    Si alguien de tu banca entra a IR, en ESPN se pueden intercambiar los dos en un solo paso.
+    const movidos = items.filter((x) => x.tipo === "mover" || x.tipo === "cambiarIR");
+    let vacios = pl.libres; // lugares libres de verdad (sin contar los que abren los de arriba)
+    const activar = pl.ilegales.map((id) => {
+      if (libres > 0) {
+        libres--;
+        if (vacios > 0) { vacios--; return { tipo: "activar", id, soltar: null }; }
+        const par = movidos.find((x) => !x.conActivar);
+        if (par) par.conActivar = id;
+        return { tipo: "activar", id, soltar: null, por: par ? par.id : null };
+      }
+      const s = soltable([id].concat(fuera()));
+      if (s) sueltos.push(s.id);
+      return { tipo: "activar", id, soltar: s };
+    });
+    items.unshift(...activar);
+    // 3) Los que siguen en IR: cuándo regresan y a quién habría que soltar entonces
+    enIRok.filter((id) => !sueltos.includes(id)).forEach((id) => {
+      const j = M.porId[id], w = M.semanaRegreso(j, ULTIMA);
+      items.push({ tipo: "enIR", id, regreso: w, soltar: libres > 0 ? null : soltable([id].concat(fuera())), inutil: !w || j.fila.ros < 3 });
+    });
+    // 4) Roster pasado del máximo
+    if (pl.sobran) W.soltarTodos.filter((x) => !fuera().includes(x.id)).slice(0, pl.sobran).forEach((x) => items.push({ tipo: "sobra", id: x.id, ap: x.aporta / sem }));
+    return { pl, items };
+  }
+  function pintarIR() {
+    const el = $("#sec-ir");
+    if (!el) return;
+    const A = analisisIR();
+    if (!A) { el.querySelector(".ir-cuerpo").innerHTML = `<p class="nota">Conecta tu liga de ESPN para saber cuántos lugares tienes en el roster, la banca y la lista de lesionados (IR).</p>`; return; }
+    const { pl, items } = A;
+    const n = (id) => `<a href="#" data-j="${id}"><b>${esc(M.porId[id].n)}</b></a>`;
+    const sl = (x) => (x ? `${n(x.id)} <span class="nota">(te aporta ${f1(x.aporta / Math.max(1, ULTIMA - SEM + 1))} pts/sem)</span>` : "alguien de tu banca");
+    const est = (id) => esc(M.elegibleIR(M.porId[id]) || "");
+    const txt = {
+      activar: (x) => ["rojo", "🚨", `${n(x.id)} ya no está lesionado y sigue en IR. ESPN no te deja agregar ni hacer cambios hasta que lo actives. ${x.soltar ? `Tu roster está lleno: para activarlo suelta a ${sl(x.soltar)}.` : x.por ? `Intercámbialo por ${n(x.por)}: ${n(x.por)} entra a IR y ${n(x.id)} pasa a tu banca, sin soltar a nadie.` : "Tienes lugar: solo actívalo."}`],
+      mover: (x) => ["verde", "🏥", x.conActivar ? `Mueve a ${n(x.id)} (${est(x.id)}) a IR en lugar de ${n(x.conActivar)} (ver arriba).` : `Mueve a ${n(x.id)} (${est(x.id)}) a IR. Te libera un lugar en la banca sin soltar a nadie; úsalo para agregar a alguien de <a href="#" data-ir="objetivos">waivers</a>.`],
+      cambiarIR: (x) => ["amar", "🔄", `${n(x.id)} (${est(x.id)}) puede ir a IR, pero tu IR está lleno con ${n(x.sale)}, que vale menos lo que resta. Suelta a ${n(x.sale)} y mete a ${n(x.id)} a IR${x.conActivar ? ` (así también tienes lugar para activar a ${n(x.conActivar)})` : ""}.`],
+      soltarLesionado: (x) => ["amar", "✂️", `${n(x.id)} (${est(x.id)}) ocupa un lugar en tu banca, tu IR está lleno y casi no te aporta (${f1(x.ap)} pts/sem). Puedes soltarlo para agregar a alguien.`],
+      banca: (x) => ["gris", "🩹", `${n(x.id)} (${est(x.id)}) puede ir a IR, pero tu IR está lleno. Consérvalo en la banca: te aporta ${f1(x.ap)} pts/sem cuando regrese.`],
+      enIR: (x) => x.inutil ? ["amar", "🗑️", `${n(x.id)} está en tu IR${x.regreso ? ` (regreso estimado: semana ${x.regreso})` : " y no se espera que regrese antes de tus playoffs"}. Le queda poco valor: si alguien más necesita el lugar de IR, suéltalo.`]
+        : ["gris", "📅", `${n(x.id)} está en tu IR. Regreso estimado: <b>semana ${x.regreso}</b>. ${x.soltar ? `Cuando regrese, para activarlo tendrás que soltar a alguien; hoy sería ${sl(x.soltar)}.` : "Tienes lugar para activarlo cuando regrese."}`],
+      sobra: (x) => ["rojo", "✂️", `Tienes jugadores de más: suelta a ${n(x.id)} (te aporta ${f1(x.ap)} pts/sem).`],
+    };
+    const lista = items.map((x) => { const [c, ico, h] = txt[x.tipo](x); return `<li class="al-${c}"><span class="al-ico" aria-hidden="true">${ico}</span><span>${h}</span></li>`; }).join("");
+    const caja = (t, v, sub, mal) => `<div class="ir-caja ${mal ? "mal" : ""}"><div class="nota">${t}</div><b>${v}</b>${sub ? `<div class="nota">${sub}</div>` : ""}</div>`;
+    el.querySelector(".ir-cuerpo").innerHTML = `<div class="ir-cajas">
+        ${caja("Roster", `${pl.activos} / ${pl.max}`, pl.libres ? `${pl.libres} ${pl.libres === 1 ? "lugar libre" : "lugares libres"}` : pl.sobran ? `${pl.sobran} de más` : "lleno", pl.sobran)}
+        ${caja("Banca", `${pl.banca}`, "lugares")}
+        ${caja("IR", `${pl.irUsados} / ${pl.irSlots}`, pl.irSlots ? (pl.irLibres ? `${pl.irLibres} libre${pl.irLibres > 1 ? "s" : ""}` : "lleno") : "tu liga no tiene IR", pl.irUsados > pl.irSlots || pl.ilegales.length)}
+      </div>
+      ${!pl.irConocido ? `<p class="nota">Da clic en <b>⟳ Actualizar</b> para saber quién está en tu IR de ESPN.</p>` : ""}
+      ${lista ? `<ul class="lista-al">${lista}</ul>` : `<p class="nota">Todo en orden: nadie de tu roster puede ir a IR y nadie en tu IR está por regresar.</p>`}`;
+    conectarClics(el);
   }
   function calcularSugerencias() {
     const base = M.puntosRestoTemporada(roster);
@@ -1364,6 +1605,98 @@
     }).sort((x, y) => (y.idea ? 1 : 0) - (x.idea ? 1 : 0) || y.necesita.length - x.necesita.length);
   }
 
+  // ================= GEMAS =================
+  // Jugadores baratos (poco valor hoy) con potencial para esta semana o lo que resta: bajas de
+  // titulares de su equipo, uso en aumento, rival fácil o ser el suplente directo de un RB titular.
+  function calcularGemas() {
+    const OFF = ["QB", "RB", "WR", "TE"];
+    const ws = M.semanaProy;
+    const dv = M.dvp().equipos;
+    const pct0 = (v) => Math.round(v * 100) + "%";
+    // Umbrales por posición a partir del ranking (titular / banca útil en una liga normal)
+    const corte = (campo, p, n) => { const v = M.tabla.filter((x) => x.j.pos === p).map(campo).sort((a, b) => b - a); return v[Math.min(v.length - 1, n)] || 0; };
+    const N = { QB: 18, RB: 36, WR: 48, TE: 16 };
+    const uSem = {}, uRos = {};
+    OFF.forEach((p) => { uSem[p] = corte((x) => x.sem.pts || 0, p, N[p]); uRos[p] = corte((x) => x.rosPG, p, N[p]); });
+    const vivo = (x) => !["CUT", "RET"].includes(x.j.estado) && x.juegosRest > 0;
+    // Suplentes directos de los RB titulares (el "seguro" o handcuff)
+    const suplente = {};
+    M.TEAMS.forEach((t) => {
+      const rbs = M.tabla.filter((x) => x.j.t === t && x.j.pos === "RB" && x.j.base && vivo(x)).sort((a, b) => b.j.base.car - a.j.base.car);
+      const tit = rbs.find((x) => M.disponibilidad(x.j, ws + 3).f > 0.5 && x.valor >= 15);
+      if (!tit) return;
+      const sup = rbs.filter((x) => x !== tit && M.disponibilidad(x.j, ws).f > 0.5 && x.j.base.car >= 2.5)[0];
+      if (!sup || sup.j.base.car > tit.j.base.car * 0.8) return; // comparten el trabajo: no es un seguro
+      const b = Object.assign({}, sup.j.base), q = tit.j.base;
+      [["car", 0.7], ["ryd", 0.62], ["rtd", 0.6], ["tgt", 0.45], ["rec", 0.45], ["recyd", 0.4], ["rectd", 0.4]].forEach(([k, f]) => (b[k] = (b[k] || 0) + f * (q[k] || 0)));
+      const techo = M.puntos(b, "RB", false);
+      const d = M.disponibilidad(tit.j, ws);
+      suplente[sup.j.id] = { tit, techo, duda: d.f < 0.9 && d.f > 0 ? d.nota : "", fuera: d.f === 0 };
+    });
+    const res = [];
+    M.tabla.forEach((x) => {
+      const j = x.j;
+      if (!OFF.includes(j.pos) || !j.base || !vivo(x) || enRoster(j.id) || x.valor > 20) return;
+      const libre = esLibre(j.id);
+      const dueno = duenoDe[j.id] && !duenoDe[j.id].mio ? duenoDe[j.id] : null;
+      if (!libre && !dueno && D.liga) return;
+      const sem = x.sem, juegaSem = !sem.bye && sem.disp && sem.disp.f >= 0.5;
+      const rSem = [], rRos = [];
+      let pSem = 0, pRos = 0;
+      // 1) Bajas de compañeros (esta semana y cuántas semanas más)
+      // Solo cuenta si la baja le da un aumento claro (10% o más) o lo vuelve titular
+      const bajaTxt = (n) => (n || "").split(" · ").find((s) => /Sería titular/.test(s) || (/baja/.test(s) && +((s.match(/^\+(\d+)%/) || [])[1] || 0) >= 10)) || "";
+      const bs = juegaSem ? bajaTxt(sem.companeros) : "";
+      if (bs) { rSem.push(bs); pSem += 2; }
+      const semBaja = x.futuros.filter((f) => bajaTxt(f.companeros)).length;
+      if (semBaja >= 3) { const t = bajaTxt(x.futuros.find((f) => bajaTxt(f.companeros)).companeros); rRos.push(`${t} (${semBaja} semanas)`); pRos += 2; }
+      // 2) Uso en aumento: snaps y oportunidades (targets + acarreos) de sus últimos 2 partidos
+      const U = j.uso;
+      if (U && U.filas.length >= 3 && U.tendencia >= 0.1 && U.snapUlt >= 0.4) {
+        const t = `${pct0(U.snapUlt)} de los snaps en sus últimos 2 partidos (antes ${pct0(U.snapUlt - U.tendencia)})`;
+        rSem.push(t); rRos.push(t); pSem += 1.5; pRos += 1.5;
+      }
+      if (j.filas.length >= 4) {
+        const op = j.filas.map((r) => { const s = M.filaObj(r); return s.tgt + s.car; });
+        const ult = M.mean(op.slice(-2)), ant = M.mean(op.slice(0, -2));
+        if (ult >= ant * 1.35 && ult - ant >= 3 && ult >= 6) {
+          const t = `${Math.round(ult)} toques por partido en sus últimos 2 (antes ${Math.round(ant)})`;
+          rSem.push(t); rRos.push(t); pSem += 1; pRos += 1;
+        }
+      }
+      // 3) Rival y calendario
+      if (juegaSem && sem.g) {
+        const op = sem.g.home === j.t ? sem.g.away : sem.g.home;
+        const d = dv[op] && dv[op][j.pos];
+        if (d && d.rank <= 6) { rSem.push(`rival fácil: ${op} es el ${d.rank}º que más puntos permite a los ${j.pos}`); pSem += 1; }
+      }
+      if (x.calendario >= 1.06 && x.juegosRest >= 3) { rRos.push(`calendario ${Math.round((x.calendario - 1) * 100)}% más fácil que el promedio lo que resta`); pRos += 1; }
+      // 4) Seguro de un RB titular
+      const S = suplente[j.id];
+      if (S) {
+        const t = `suplente de ${S.tit.j.n}${S.duda ? ` (${S.duda.replace(" (ESPN)", "").toLowerCase()})` : ""}: si no juega, proyectaría ~${f1(S.techo)} pts`;
+        if (S.duda && juegaSem) { rSem.push(t); pSem += 2; }
+        rRos.push(t); pRos += S.techo >= uRos.RB * 1.4 ? 2 : 1;
+      }
+      // 5) Tendencia en Sleeper
+      const alta = sleeper && j.sl && sleeper.alta[j.sl];
+      const nivelSem = juegaSem ? sem.pts / (uSem[j.pos] || 1) : 0;
+      const nivelRos = x.rosPG / (uRos[j.pos] || 1);
+      const okSem = rSem.length && juegaSem && nivelSem >= 0.9 && pSem >= 1.5;
+      const okRos = rRos.length && x.juegosRest >= 3 && (nivelRos >= 0.85 || (S && S.techo >= uRos.RB * 1.3)) && pRos >= 1.5;
+      if (!okSem && !okRos) return;
+      if (j.pos === "QB" && !rSem.concat(rRos).some((r) => /titular/.test(r))) return; // QB: solo si va a ser titular
+      res.push({
+        x, libre, dueno, alta,
+        sem: okSem ? { pts: sem.pts, razones: rSem, score: nivelSem * (1 + 0.15 * pSem) } : null,
+        ros: okRos ? { razones: rRos, score: Math.max(nivelRos, S ? S.techo / uRos.RB * 0.75 : 0) * (1 + 0.15 * pRos) } : null,
+      });
+    });
+    const top = (k) => res.filter((g) => g[k]).sort((a, b) => b[k].score - a[k].score).slice(0, 6);
+    return { semana: top("sem"), ros: top("ros") };
+  }
+
+  let vistaGemas = "semana";
   let posCalendario = "OF";
   render.objetivos = function () {
     const el = $("#tab-objetivos");
@@ -1409,19 +1742,38 @@
     const fa = M.cfg.faab;
     const queda = fa && ligaMia ? Math.max(0, fa.presupuesto - (ligaMia.faabGastado || 0)) : null;
     const tSl = (j) => (sleeper && j.sl && sleeper.alta[j.sl] ? `<span class="tag verde" title="Agregado ${sleeper.alta[j.sl].toLocaleString("es-MX")} veces en Sleeper en las últimas 24 h">🔥 ${sleeper.alta[j.sl] >= 1000 ? Math.round(sleeper.alta[j.sl] / 1000) + " mil" : sleeper.alta[j.sl]}</span>` : "");
+    const gemasHTML = () => {
+      const G = cache.gemas || (cache.gemas = calcularGemas());
+      const lista = G[vistaGemas === "ros" ? "ros" : "semana"];
+      const filas = lista.map((g) => {
+        const j = g.x.j, r = vistaGemas === "ros" ? g.ros : g.sem;
+        const quien = g.libre ? `<span class="tag verde">Waiver</span>` : `<span class="tag azul">Trade</span>`;
+        const extra = g.dueno ? esc(g.dueno.nombre) : j.espn ? j.espn.own + "% ligas" : "";
+        const num = vistaGemas === "ros" ? `${f1(g.x.rosPG)}<div class="nota">pts/PJ resto</div>` : `${f1(g.x.sem.pts)}<div class="nota">pts S${SEM}</div>`;
+        return `<li class="gema"><div class="gema-top"><div class="clic" data-j="${j.id}" style="cursor:pointer;min-width:0;flex:1">${jugHTML(j, extra)}</div>
+          <div class="gema-num n fuerte">${num}</div></div>
+          <div class="gema-tags">${quien} <span class="tag gris">Valor ${g.x.valor}</span> ${tSl(j)}${g.dueno ? ` <button class="sec chico-b" data-gtrade="${j.id}">Armar trade</button>` : ""}</div>
+          <ul class="gema-razones">${r.razones.slice(0, 3).map((t) => `<li>${esc(t)}</li>`).join("")}</ul></li>`;
+      }).join("");
+      return `<div class="panel">${titulo("💎 Gemas baratas", "Jugadores de valor bajo (20 o menos) que nadie tiene en tu liga o que puedes pedir barato en un trade, con potencial por la baja de un titular de su equipo, más snaps o toques en sus últimos partidos, un rival fácil o por ser el suplente directo de un RB titular (si él se lesiona, se queda con el puesto). Waiver = libre; Trade = tiene dueño.")}
+        <div class="seg">${[["semana", `Semana ${SEM}`], ["ros", "Resto de la temporada"]].map(([k, t]) => `<button class="${vistaGemas === k ? "on" : ""}" data-vg="${k}">${t}</button>`).join("")}</div>
+        ${filas ? `<ul class="gemas">${filas}</ul>` : `<div class="vacio">No encontré gemas claras ${vistaGemas === "ros" ? "para lo que resta" : "para esta semana"}.</div>`}</div>`;
+    };
     el.innerHTML = `<h2>Mercado: compra, vende, agrega y suelta ${ayuda("Proy/PJ = puntos por partido que el modelo espera el resto de la temporada. Cuando es mucho mayor que lo que ha hecho (Pts/PJ), es buen momento para pedirlo; cuando es menor, es buen momento para venderlo.")}</h2>
       <div class="panel bloque">${titulo("Trades recomendados para tu equipo", `Ofertas de valor parecido (que el otro equipo podría aceptar) que más puntos por semana le suman a tu alineación.${D.liga ? "" : " Como tu liga no está conectada, puede sugerir jugadores que nadie tiene."}`)}${sug}</div>
       ${necesHTML}
       <div class="grid2 anchas bloque">
+        ${gemasHTML()}
         <div class="panel">${titulo("➕ Agregar de waivers", `${D.liga ? "Jugadores que nadie tiene en tu liga" : "Jugadores en pocas ligas de ESPN (conecta tu liga para ver solo los libres de verdad)"}, ordenados por cuántos puntos le suman a tu alineación lo que resta de la temporada, y a quién soltarías.${fa ? " La oferta FAAB sugerida depende de cuánto te suma y de lo que te queda de presupuesto." : ""} 🔥 = de los más agregados hoy en Sleeper.`)}
           ${fa && queda !== null ? `<p class="nota">Te quedan <b>$${queda}</b> de $${fa.presupuesto} de FAAB.</p>` : ""}
+          ${W && W.pl.sabe ? `<p class="nota">Roster: <b>${W.pl.activos} de ${W.pl.max}</b>${W.pl.libres ? ` · ${W.pl.libres} ${W.pl.libres === 1 ? "lugar libre" : "lugares libres"}` : " · lleno: para agregar hay que soltar"} · IR: ${W.pl.irUsados} de ${W.pl.irSlots}.${W.pl.ilegales.length ? ` <span class="malo">Activa primero a ${W.pl.ilegales.map((id) => esc(M.porId[id].n)).join(" y ")} de tu IR: ESPN no te deja agregar hasta entonces.</span>` : ""} <a href="#" data-ir="equipo">Ver Roster e IR</a></p>` : ""}
           ${sinRoster ? necesitaRoster : W ? (W.agregar.length ? `<div class="tabla-scroll"><table class="mini"><thead><tr><th>Agrega</th><th>Suelta</th><th class="n">Gana</th>${fa ? `<th class="n">Oferta FAAB</th>` : ""}</tr></thead><tbody>${W.agregar.map((w) => { const of = ofertaFaab(w.gana / semanas); const j = M.porId[w.add]; return `<tr>
             <td class="clic" data-j="${w.add}">${jugHTML(j, j.espn ? j.espn.own + "% ligas" : "")} ${tSl(j)}<div class="nota" style="margin-left:42px">Proy. semana ${SEM}: ${f1(j.fila.sem.pts)} · resto: ${f0(j.fila.ros)}</div></td>
-            <td class="clic" data-j="${w.drop}">${jugHTML(M.porId[w.drop])}</td>
+            ${w.drop ? `<td class="clic" data-j="${w.drop}">${jugHTML(M.porId[w.drop])}</td>` : w.ir ? `<td class="clic" data-j="${w.ir}">${jugHTML(M.porId[w.ir], "muévelo a IR")}</td>` : `<td class="nota">Nadie: tienes lugar</td>`}
             <td class="n bueno fuerte">+${f1(w.gana / semanas)}<div class="nota">pts/sem</div></td>
             ${fa ? `<td class="n fuerte">${of ? (of.max ? `$${of.min}–${of.max}` : "$0") : "–"}</td>` : ""}</tr>`; }).join("")}</tbody></table></div>` :
             `<div class="vacio">Ningún agente libre mejora tu alineación ahora mismo.</div>`) : `<div class="vacio">Calculando…</div>`}</div>
-        <div class="panel">${titulo("➖ Candidatos para soltar", "Los jugadores de tu roster que menos puntos le aportan a tu alineación lo que resta de la temporada (casi nunca serían titulares).")}
+        <div class="panel">${titulo("➖ Candidatos para soltar", "Los jugadores de tu roster que menos puntos le aportan a tu alineación lo que resta de la temporada (casi nunca serían titulares). No incluye a los de tu IR: soltarlos no te abre lugar en el roster.")}
           ${sinRoster ? necesitaRoster : W ? (W.soltar.length ? `<div class="tabla-scroll"><table class="mini"><thead><tr><th>Jugador</th><th class="n">Aporta</th><th class="n">Valor</th></tr></thead><tbody>${W.soltar.map((w) => `<tr class="clic" data-j="${w.id}">
             <td>${jugHTML(M.porId[w.id])}</td><td class="n">${f1(w.aporta / semanas)}<div class="nota">pts/sem</div></td><td class="n">${M.porId[w.id].fila.valor}</td></tr>`).join("")}</tbody></table></div>` : `<div class="vacio">Nadie.</div>`) : `<div class="vacio">Calculando…</div>`}</div>
         <div class="panel">${titulo("★ Mis seguimientos", "Abre a cualquier jugador y toca ☆ Seguir para tenerlo aquí, con tus notas, en la computadora y en el teléfono.")}
@@ -1444,6 +1796,10 @@
     el.querySelectorAll("[data-prueba]").forEach((b) => (b.onclick = () => {
       const s = cache.sugerencias[+b.dataset.prueba];
       trade.doy = s.doy.slice(); trade.recibo = [s.objetivo]; vistaTrades = "analizar"; abrir("trades");
+    }));
+    el.querySelectorAll("[data-vg]").forEach((b) => (b.onclick = () => { vistaGemas = b.dataset.vg; render.objetivos(); }));
+    el.querySelectorAll("[data-gtrade]").forEach((b) => (b.onclick = () => {
+      trade.recibo = [b.dataset.gtrade]; trade.doy = []; vistaTrades = "analizar"; abrir("trades");
     }));
     if ($("#posCal")) $("#posCal").onchange = (e) => { posCalendario = e.target.value; render.objetivos(); };
     conectarClics(el);
