@@ -1594,6 +1594,98 @@
     }).sort((x, y) => (y.idea ? 1 : 0) - (x.idea ? 1 : 0) || y.necesita.length - x.necesita.length);
   }
 
+  // ================= GEMAS =================
+  // Jugadores baratos (poco valor hoy) con potencial para esta semana o lo que resta: bajas de
+  // titulares de su equipo, uso en aumento, rival fácil o ser el suplente directo de un RB titular.
+  function calcularGemas() {
+    const OFF = ["QB", "RB", "WR", "TE"];
+    const ws = M.semanaProy;
+    const dv = M.dvp().equipos;
+    const pct0 = (v) => Math.round(v * 100) + "%";
+    // Umbrales por posición a partir del ranking (titular / banca útil en una liga normal)
+    const corte = (campo, p, n) => { const v = M.tabla.filter((x) => x.j.pos === p).map(campo).sort((a, b) => b - a); return v[Math.min(v.length - 1, n)] || 0; };
+    const N = { QB: 18, RB: 36, WR: 48, TE: 16 };
+    const uSem = {}, uRos = {};
+    OFF.forEach((p) => { uSem[p] = corte((x) => x.sem.pts || 0, p, N[p]); uRos[p] = corte((x) => x.rosPG, p, N[p]); });
+    const vivo = (x) => !["CUT", "RET"].includes(x.j.estado) && x.juegosRest > 0;
+    // Suplentes directos de los RB titulares (el "seguro" o handcuff)
+    const suplente = {};
+    M.TEAMS.forEach((t) => {
+      const rbs = M.tabla.filter((x) => x.j.t === t && x.j.pos === "RB" && x.j.base && vivo(x)).sort((a, b) => b.j.base.car - a.j.base.car);
+      const tit = rbs.find((x) => M.disponibilidad(x.j, ws + 3).f > 0.5 && x.valor >= 15);
+      if (!tit) return;
+      const sup = rbs.filter((x) => x !== tit && M.disponibilidad(x.j, ws).f > 0.5 && x.j.base.car >= 2.5)[0];
+      if (!sup || sup.j.base.car > tit.j.base.car * 0.8) return; // comparten el trabajo: no es un seguro
+      const b = Object.assign({}, sup.j.base), q = tit.j.base;
+      [["car", 0.7], ["ryd", 0.62], ["rtd", 0.6], ["tgt", 0.45], ["rec", 0.45], ["recyd", 0.4], ["rectd", 0.4]].forEach(([k, f]) => (b[k] = (b[k] || 0) + f * (q[k] || 0)));
+      const techo = M.puntos(b, "RB", false);
+      const d = M.disponibilidad(tit.j, ws);
+      suplente[sup.j.id] = { tit, techo, duda: d.f < 0.9 && d.f > 0 ? d.nota : "", fuera: d.f === 0 };
+    });
+    const res = [];
+    M.tabla.forEach((x) => {
+      const j = x.j;
+      if (!OFF.includes(j.pos) || !j.base || !vivo(x) || enRoster(j.id) || x.valor > 20) return;
+      const libre = esLibre(j.id);
+      const dueno = duenoDe[j.id] && !duenoDe[j.id].mio ? duenoDe[j.id] : null;
+      if (!libre && !dueno && D.liga) return;
+      const sem = x.sem, juegaSem = !sem.bye && sem.disp && sem.disp.f >= 0.5;
+      const rSem = [], rRos = [];
+      let pSem = 0, pRos = 0;
+      // 1) Bajas de compañeros (esta semana y cuántas semanas más)
+      // Solo cuenta si la baja le da un aumento claro (10% o más) o lo vuelve titular
+      const bajaTxt = (n) => (n || "").split(" · ").find((s) => /Sería titular/.test(s) || (/baja/.test(s) && +((s.match(/^\+(\d+)%/) || [])[1] || 0) >= 10)) || "";
+      const bs = juegaSem ? bajaTxt(sem.companeros) : "";
+      if (bs) { rSem.push(bs); pSem += 2; }
+      const semBaja = x.futuros.filter((f) => bajaTxt(f.companeros)).length;
+      if (semBaja >= 3) { const t = bajaTxt(x.futuros.find((f) => bajaTxt(f.companeros)).companeros); rRos.push(`${t} (${semBaja} semanas)`); pRos += 2; }
+      // 2) Uso en aumento: snaps y oportunidades (targets + acarreos) de sus últimos 2 partidos
+      const U = j.uso;
+      if (U && U.filas.length >= 3 && U.tendencia >= 0.1 && U.snapUlt >= 0.4) {
+        const t = `${pct0(U.snapUlt)} de los snaps en sus últimos 2 partidos (antes ${pct0(U.snapUlt - U.tendencia)})`;
+        rSem.push(t); rRos.push(t); pSem += 1.5; pRos += 1.5;
+      }
+      if (j.filas.length >= 4) {
+        const op = j.filas.map((r) => { const s = M.filaObj(r); return s.tgt + s.car; });
+        const ult = M.mean(op.slice(-2)), ant = M.mean(op.slice(0, -2));
+        if (ult >= ant * 1.35 && ult - ant >= 3 && ult >= 6) {
+          const t = `${Math.round(ult)} toques por partido en sus últimos 2 (antes ${Math.round(ant)})`;
+          rSem.push(t); rRos.push(t); pSem += 1; pRos += 1;
+        }
+      }
+      // 3) Rival y calendario
+      if (juegaSem && sem.g) {
+        const op = sem.g.home === j.t ? sem.g.away : sem.g.home;
+        const d = dv[op] && dv[op][j.pos];
+        if (d && d.rank <= 6) { rSem.push(`rival fácil: ${op} es el ${d.rank}º que más puntos permite a los ${j.pos}`); pSem += 1; }
+      }
+      if (x.calendario >= 1.06 && x.juegosRest >= 3) { rRos.push(`calendario ${Math.round((x.calendario - 1) * 100)}% más fácil que el promedio lo que resta`); pRos += 1; }
+      // 4) Seguro de un RB titular
+      const S = suplente[j.id];
+      if (S) {
+        const t = `suplente de ${S.tit.j.n}${S.duda ? ` (${S.duda.replace(" (ESPN)", "").toLowerCase()})` : ""}: si no juega, proyectaría ~${f1(S.techo)} pts`;
+        if (S.duda && juegaSem) { rSem.push(t); pSem += 2; }
+        rRos.push(t); pRos += S.techo >= uRos.RB * 1.4 ? 2 : 1;
+      }
+      // 5) Tendencia en Sleeper
+      const alta = sleeper && j.sl && sleeper.alta[j.sl];
+      const nivelSem = juegaSem ? sem.pts / (uSem[j.pos] || 1) : 0;
+      const nivelRos = x.rosPG / (uRos[j.pos] || 1);
+      const okSem = rSem.length && juegaSem && nivelSem >= 0.9 && pSem >= 1.5;
+      const okRos = rRos.length && x.juegosRest >= 3 && (nivelRos >= 0.85 || (S && S.techo >= uRos.RB * 1.3)) && pRos >= 1.5;
+      if (!okSem && !okRos) return;
+      if (j.pos === "QB" && !rSem.concat(rRos).some((r) => /titular/.test(r))) return; // QB: solo si va a ser titular
+      res.push({
+        x, libre, dueno, alta,
+        sem: okSem ? { pts: sem.pts, razones: rSem, score: nivelSem * (1 + 0.15 * pSem) } : null,
+        ros: okRos ? { razones: rRos, score: Math.max(nivelRos, S ? S.techo / uRos.RB * 0.75 : 0) * (1 + 0.15 * pRos) } : null,
+      });
+    });
+    const top = (k) => res.filter((g) => g[k]).sort((a, b) => b[k].score - a[k].score).slice(0, 6);
+    return { semana: top("sem"), ros: top("ros") };
+  }
+
+  let vistaGemas = "semana";
   let posCalendario = "OF";
   render.objetivos = function () {
     const el = $("#tab-objetivos");
@@ -1639,10 +1731,28 @@
     const fa = M.cfg.faab;
     const queda = fa && ligaMia ? Math.max(0, fa.presupuesto - (ligaMia.faabGastado || 0)) : null;
     const tSl = (j) => (sleeper && j.sl && sleeper.alta[j.sl] ? `<span class="tag verde" title="Agregado ${sleeper.alta[j.sl].toLocaleString("es-MX")} veces en Sleeper en las últimas 24 h">🔥 ${sleeper.alta[j.sl] >= 1000 ? Math.round(sleeper.alta[j.sl] / 1000) + " mil" : sleeper.alta[j.sl]}</span>` : "");
+    const gemasHTML = () => {
+      const G = cache.gemas || (cache.gemas = calcularGemas());
+      const lista = G[vistaGemas === "ros" ? "ros" : "semana"];
+      const filas = lista.map((g) => {
+        const j = g.x.j, r = vistaGemas === "ros" ? g.ros : g.sem;
+        const quien = g.libre ? `<span class="tag verde">Waiver</span>` : `<span class="tag azul">Trade</span>`;
+        const extra = g.dueno ? esc(g.dueno.nombre) : j.espn ? j.espn.own + "% ligas" : "";
+        const num = vistaGemas === "ros" ? `${f1(g.x.rosPG)}<div class="nota">pts/PJ resto</div>` : `${f1(g.x.sem.pts)}<div class="nota">pts S${SEM}</div>`;
+        return `<li class="gema"><div class="gema-top"><div class="clic" data-j="${j.id}" style="cursor:pointer;min-width:0;flex:1">${jugHTML(j, extra)}</div>
+          <div class="gema-num n fuerte">${num}</div></div>
+          <div class="gema-tags">${quien} <span class="tag gris">Valor ${g.x.valor}</span> ${tSl(j)}${g.dueno ? ` <button class="sec chico-b" data-gtrade="${j.id}">Armar trade</button>` : ""}</div>
+          <ul class="gema-razones">${r.razones.slice(0, 3).map((t) => `<li>${esc(t)}</li>`).join("")}</ul></li>`;
+      }).join("");
+      return `<div class="panel">${titulo("💎 Gemas baratas", "Jugadores de valor bajo (20 o menos) que nadie tiene en tu liga o que puedes pedir barato en un trade, con potencial por la baja de un titular de su equipo, más snaps o toques en sus últimos partidos, un rival fácil o por ser el suplente directo de un RB titular (si él se lesiona, se queda con el puesto). Waiver = libre; Trade = tiene dueño.")}
+        <div class="seg">${[["semana", `Semana ${SEM}`], ["ros", "Resto de la temporada"]].map(([k, t]) => `<button class="${vistaGemas === k ? "on" : ""}" data-vg="${k}">${t}</button>`).join("")}</div>
+        ${filas ? `<ul class="gemas">${filas}</ul>` : `<div class="vacio">No encontré gemas claras ${vistaGemas === "ros" ? "para lo que resta" : "para esta semana"}.</div>`}</div>`;
+    };
     el.innerHTML = `<h2>Mercado: compra, vende, agrega y suelta ${ayuda("Proy/PJ = puntos por partido que el modelo espera el resto de la temporada. Cuando es mucho mayor que lo que ha hecho (Pts/PJ), es buen momento para pedirlo; cuando es menor, es buen momento para venderlo.")}</h2>
       <div class="panel bloque">${titulo("Trades recomendados para tu equipo", `Ofertas de valor parecido (que el otro equipo podría aceptar) que más puntos por semana le suman a tu alineación.${D.liga ? "" : " Como tu liga no está conectada, puede sugerir jugadores que nadie tiene."}`)}${sug}</div>
       ${necesHTML}
       <div class="grid2 anchas bloque">
+        ${gemasHTML()}
         <div class="panel">${titulo("➕ Agregar de waivers", `${D.liga ? "Jugadores que nadie tiene en tu liga" : "Jugadores en pocas ligas de ESPN (conecta tu liga para ver solo los libres de verdad)"}, ordenados por cuántos puntos le suman a tu alineación lo que resta de la temporada, y a quién soltarías.${fa ? " La oferta FAAB sugerida depende de cuánto te suma y de lo que te queda de presupuesto." : ""} 🔥 = de los más agregados hoy en Sleeper.`)}
           ${fa && queda !== null ? `<p class="nota">Te quedan <b>$${queda}</b> de $${fa.presupuesto} de FAAB.</p>` : ""}
           ${W && W.pl.sabe ? `<p class="nota">Roster: <b>${W.pl.activos} de ${W.pl.max}</b>${W.pl.libres ? ` · ${W.pl.libres} ${W.pl.libres === 1 ? "lugar libre" : "lugares libres"}` : " · lleno: para agregar hay que soltar"} · IR: ${W.pl.irUsados} de ${W.pl.irSlots}.${W.pl.ilegales.length ? ` <span class="malo">Activa primero a ${W.pl.ilegales.map((id) => esc(M.porId[id].n)).join(" y ")} de tu IR: ESPN no te deja agregar hasta entonces.</span>` : ""} <a href="#" data-ir="equipo">Ver Roster e IR</a></p>` : ""}
@@ -1675,6 +1785,10 @@
     el.querySelectorAll("[data-prueba]").forEach((b) => (b.onclick = () => {
       const s = cache.sugerencias[+b.dataset.prueba];
       trade.doy = s.doy.slice(); trade.recibo = [s.objetivo]; vistaTrades = "analizar"; abrir("trades");
+    }));
+    el.querySelectorAll("[data-vg]").forEach((b) => (b.onclick = () => { vistaGemas = b.dataset.vg; render.objetivos(); }));
+    el.querySelectorAll("[data-gtrade]").forEach((b) => (b.onclick = () => {
+      trade.recibo = [b.dataset.gtrade]; trade.doy = []; vistaTrades = "analizar"; abrir("trades");
     }));
     if ($("#posCal")) $("#posCal").onchange = (e) => { posCalendario = e.target.value; render.objetivos(); };
     conectarClics(el);
